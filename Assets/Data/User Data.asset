@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8e9e5a528cf8bd3438e4b6a585eb67a5, type: 3}
+  m_Name: User Data
+  m_EditorClassIdentifier: 
+  Uid: {fileID: 11400000, guid: 082cc7a7c93fae74a940bb3a5efff188, type: 2}
+  Rank: {fileID: 11400000, guid: 0edd2b589bcdd3f43b2e779a3949f6b7, type: 2}
+  Crystals: {fileID: 11400000, guid: 6b405aa4e21342645a3f6851146e85c5, type: 2}
+  Score: {fileID: 11400000, guid: e9e730f939502634c9b1e1c9228026e5, type: 2}
+  NextRankScore: {fileID: 11400000, guid: 253944a57de660c42aaa7c5d8290137f, type: 2}

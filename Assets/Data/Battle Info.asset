@@ -1,0 +1,44 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a1a576fae522029479a5ba834adc8b24, type: 3}
+  m_Name: Battle Info
+  m_EditorClassIdentifier: 
+  _data:
+    itemId: 
+    battleMode: 
+    name: 
+    preview: 0
+    scoreLimit: 0
+    timeLimitInSec: 0
+    maxPeopleCount: 0
+    minRank: 0
+    maxRank: 0
+    proBattle: 0
+    parkourMode: 0
+    roundStarted: 0
+    spectator: 0
+    timeLeftInSec: 0
+    userPaidNoSuppliesBattle: 0
+    withoutBonuses: 0
+    withoutCrystals: 0
+    withoutSupplies: 0
+    equipmentConstraintsMode: 
+    reArmorEnabled: 0
+    proBattleEnterPrice: 0
+    proBattleTimeLeftInSec: 0
+    users: []
+    usersBlue: []
+    usersRed: []
+    scoreBlue: 0
+    scoreRed: 0
+    autoBalance: 0
+    friendlyFire: 0

@@ -1,0 +1,40 @@
+# Unity default ignore
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Mm]emoryCaptures/
+/[Uu]serSettings/
+
+# Visual Studio cache/configurations
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# CUSTOM IGNORE
+/Flash_Legacy/
+/clients/
+/surse/
+/Klient_init-tank_Unity/
