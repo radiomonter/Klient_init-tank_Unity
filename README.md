@@ -1,5 +1,6 @@
 # 🛡️ Klient_init-tank_Unity
 ### *The Legacy Lives On: Reconstructing the Golden Era of Tanki Online*
+### *Легенда продолжается: Реконструкция золотой эры «Танков Онлайн»*
 
 ![Unity](https://img.shields.io/badge/Made%20with-Unity%202022.3-black.svg?style=for-the-badge&logo=unity)
 ![C#](https://img.shields.io/badge/Language-C%23-purple.svg?style=for-the-badge&logo=c-sharp)
@@ -7,57 +8,50 @@
 
 ---
 
-## 🌟 The Vision
-This project is a high-fidelity reconstruction of the legendary **Tanki Online** Flash client (2012-2015 era). We aren't just building a game; we are preserving a piece of gaming history. By migrating the original ActionScript 3 logic to **Unity & C#**, we bring modern stability and performance to the classic gameplay we all love.
+## 🌟 The Vision / О проекте
+**EN:** This project is a high-fidelity reconstruction of the legendary **Tanki Online** Flash client (2012-2015 era). We aren't just building a game; we are preserving a piece of gaming history. By migrating the original ActionScript 3 logic to **Unity & C#**, we bring modern stability and performance to the classic gameplay we all love.
+
+**RU:** Этот проект — высокоточная реконструкция легендарного Flash-клиента **Танков Онлайн** (эпохи 2012-2015 годов). Мы не просто создаем игру, мы сохраняем частичку истории. Перенося оригинальную логику ActionScript 3 на **Unity и C#**, мы даем классическому геймплею современную стабильность и производительность.
 
 ---
 
-## ✨ Key Highlights
+## ✨ Key Highlights / Особенности
 
-### 🎨 Pixel-Perfect UI Reconstruction
+### 🎨 Pixel-Perfect UI Reconstruction / Пиксель-перфект интерфейс
 *   **Legacy Skinning**: 1:1 recreation of the classic "Grey", "Green", and "Gold" UI button systems.
 *   **Authentic Layouts**: Every pixel of the Lobby, Chat, and Entrance screen is measured against the original client.
-*   **Dynamic UI Builders**: Custom Editor tools that assemble the interface using original Flash texture libraries.
+*   **RU:** Воссоздание оригинальных скинов кнопок (Серые, Зеленые, Золотые) и точное соблюдение всех отступов и координат оригинального лобби и чата.
 
-### ⚙️ Engine & Architecture
-*   **OSGi-Inspired Core**: A robust service-registry system that mirrors the original `alternativa.osgi` pattern for maximum modularity.
-*   **Legacy Networking**: Native support for the **FlashTanki** socket protocol, including:
-    *   Command parsing with `~dne` delimiters.
-    *   Authentic AES and Shift-key encryption.
-    *   Windows-1251 character encoding for server compatibility.
-
-### 🚀 Modern Performance
-*   Leveraging **Unity's URP/Built-in** rendering for smooth 60+ FPS gameplay.
-*   Optimized asset management using **ScriptableObjects** and efficient memory layouts.
+### ⚙️ Engine & Architecture / Движок и Архитектура
+*   **OSGi-Inspired Core**: A robust service-registry system that mirrors the original `alternativa.osgi` pattern.
+*   **Legacy Networking**: Native support for the **FlashTanki** protocol (`~dne` delimiters, AES & Shift encryption).
+*   **RU:** Архитектура на базе сервисов (вдохновленная OSGi), поддержка оригинального сетевого протокола и шифрования AES/Shift для совместимости со старыми серверами.
 
 ---
 
-## 📊 Current Roadmap
+## 📊 Current Roadmap / План развития
 
-| Feature | Status | Description |
+| Feature / Функционал | Status / Статус | Description / Описание |
 | :--- | :---: | :--- |
-| **Project Core** | ✅ | Environment setup, Git integration, and Version control. |
-| **Lobby UI** | 🏗️ | Entrance, Top Panel, and Tabbed Communication system. |
-| **Networking** | 🛠️ | Socket implementation and protocol handshake. |
-| **Battle System** | 📅 | *Planned:* Tank physics and classic weapon mechanics. |
-| **Garage** | 📅 | *Planned:* Equipment management and 3D preview. |
+| **Project Core** | ✅ | Environment setup, Git integration. / Настройка окружения и Git. |
+| **Lobby UI** | 🏗️ | Entrance, Top Panel, and Chat. / Экран входа, верхняя панель и чат. |
+| **Networking** | 🛠️ | Socket implementation and handshake. / Реализация сокетов и рукопожатия. |
+| **Battle System** | 📅 | *Planned:* Tank physics. / *В планах:* Физика танков. |
 
 ---
 
-## 🛠️ How to Launch
-1. Ensure you have **Unity 2022.3.62f3** installed.
-2. Use the provided `launch_unity.bat` for a guaranteed version-safe startup.
-3. Dive into the source and help us rebuild the legend!
+## 🛠️ How to Launch / Как запустить
+1. **EN:** Ensure you have **Unity 2022.3.62f3** installed.
+2. **EN:** Use the provided `launch_unity.bat` for a guaranteed version-safe startup.
+3. **RU:** Убедитесь, что установлена версия **Unity 2022.3.62f3**.
+4. **RU:** Используйте файл `launch_unity.bat` для гарантированного запуска в нужной версии.
 
 ---
 
-## 🇷🇺 На русском
-Это амбициозный проект по воссозданию "тех самых" Танков Онлайн на движке Unity. Мы бережно переносим каждый элемент интерфейса, каждую строчку сетевой логики из оригинального AS3-кода, чтобы дать классике вторую жизнь в современном исполнении.
-
----
-
-## ⚖️ Legal Disclaimer
+## ⚖️ Legal Disclaimer / Правовая информация
 *This repository is for educational and archival purposes. All original assets, trademarks, and brand names are the property of Alternativa Games. This is a community-driven preservation project.*
+
+*Данный репозиторий создан исключительно в образовательных и архивных целях. Все оригинальные ресурсы и торговые марки принадлежат Alternativa Games.*
 
 ---
 **Maintained with ❤️ by [radiomonter](https://github.com/radiomonter)**
