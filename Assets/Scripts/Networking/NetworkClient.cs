@@ -22,12 +22,30 @@ namespace Tanki.Networking
         private TcpClient _client;
         private NetworkStream _stream;
         private byte[] _buffer = new byte[16384]; // Увеличен для больших пакетов
-        private string _receivedDataBuffer = "";
 
         // Simple encryption state from original Flash/Kotlin code
-        private int _lastKey = 1;
+        private int _lastKey = 0;
+
+        public static NetworkClient Instance { get; private set; }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+
+        public enum ConnectionState { Disconnected, Connecting, Connected, Error }
+        public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
+        public string LastError { get; private set; } = "";
 
         public event Action<Command> OnCommandReceived;
+        public event Action<string> OnConnectionError;
+        public event Action OnConnectionSuccess;
 
         private void Start()
         {
@@ -43,6 +61,11 @@ namespace Tanki.Networking
 
         public void Connect()
         {
+            if (State == ConnectionState.Connecting || State == ConnectionState.Connected) return;
+            
+            State = ConnectionState.Connecting;
+            LastError = "";
+            
             try
             {
                 Debug.Log($"[Network] Connecting to {_host}:{_port}...");
@@ -51,7 +74,10 @@ namespace Tanki.Networking
             }
             catch (Exception e)
             {
+                State = ConnectionState.Error;
+                LastError = e.Message;
                 Debug.LogError($"[Network] Connection failed: {e.Message}");
+                UnityMainThreadDispatcher.EnqueueAction(() => OnConnectionError?.Invoke(e.Message));
             }
         }
 
@@ -65,17 +91,25 @@ namespace Tanki.Networking
                 
                 _stream.BeginRead(_buffer, 0, _buffer.Length, OnReadCallback, null);
                 
-                UnityMainThreadDispatcher.Instance.Enqueue(() => {
+                UnityMainThreadDispatcher.EnqueueAction(() => {
+                    State = ConnectionState.Connected;
+                    LastError = "";
                     Debug.Log("[Network] Connected to server. Sending get_aes_data...");
                     Send("system", "get_aes_data", "RU"); 
                     _onConnected?.Raise();
+                    OnConnectionSuccess?.Invoke();
                 });
             }
             catch (Exception e)
             {
+                State = ConnectionState.Error;
+                LastError = e.Message;
                 Debug.LogError($"[Network] Error on connect: {e.Message}");
+                UnityMainThreadDispatcher.EnqueueAction(() => OnConnectionError?.Invoke(e.Message));
             }
         }
+
+        private List<byte> _receivedDataBuffer = new List<byte>();
 
         private void OnReadCallback(IAsyncResult ar)
         {
@@ -91,10 +125,10 @@ namespace Tanki.Networking
                     return;
                 }
 
-                // Use UTF-8 as it is the standard for Flash writeUTFBytes/readUTFBytes
-                // and correctly handles multi-byte characters created during shifting.
-                string rawData = Encoding.UTF8.GetString(_buffer, 0, bytesRead);
-                _receivedDataBuffer += rawData;
+                // Add raw bytes to buffer
+                byte[] incomingBytes = new byte[bytesRead];
+                Buffer.BlockCopy(_buffer, 0, incomingBytes, 0, bytesRead);
+                _receivedDataBuffer.AddRange(incomingBytes);
 
                 ProcessRawData();
 
@@ -103,10 +137,7 @@ namespace Tanki.Networking
                     _stream.BeginRead(_buffer, 0, _buffer.Length, OnReadCallback, null);
                 }
             }
-            catch (ObjectDisposedException)
-            {
-                // Expected when disconnecting
-            }
+            catch (ObjectDisposedException) { }
             catch (Exception e)
             {
                 Debug.LogError($"[Network] Read error: {e.Message}");
@@ -116,26 +147,45 @@ namespace Tanki.Networking
 
         private void ProcessRawData()
         {
+            byte[] delimiter = Encoding.ASCII.GetBytes(ProtocolConstants.CommandDelimiter);
             int delimiterIndex;
-            while ((delimiterIndex = _receivedDataBuffer.IndexOf(ProtocolConstants.CommandDelimiter)) != -1)
-            {
-                string packet = _receivedDataBuffer.Substring(0, delimiterIndex);
-                _receivedDataBuffer = _receivedDataBuffer.Substring(delimiterIndex + ProtocolConstants.CommandDelimiter.Length);
 
-                if (!string.IsNullOrEmpty(packet))
+            while ((delimiterIndex = IndexOfSequence(_receivedDataBuffer.ToArray(), delimiter)) != -1)
+            {
+                byte[] packetBytes = new byte[delimiterIndex];
+                _receivedDataBuffer.CopyTo(0, packetBytes, 0, delimiterIndex);
+                _receivedDataBuffer.RemoveRange(0, delimiterIndex + delimiter.Length);
+
+                if (packetBytes.Length > 0)
                 {
-                    string decrypted = Decrypt(packet);
-                    if (decrypted != null)
+                    string decrypted = Decrypt(packetBytes);
+                    if (!string.IsNullOrEmpty(decrypted))
                     {
                         var commands = Command.Parse(decrypted);
                         foreach (var cmd in commands)
                         {
-                            UnityMainThreadDispatcher.Instance.Enqueue(() => OnCommandReceived?.Invoke(cmd));
+                            UnityMainThreadDispatcher.EnqueueAction(() => OnCommandReceived?.Invoke(cmd));
                         }
                     }
                 }
             }
         }
+
+        private int IndexOfSequence(byte[] buffer, byte[] pattern)
+        {
+            for (int i = 0; i <= buffer.Length - pattern.Length; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < pattern.Length; j++)
+                {
+                    if (buffer[i + j] != pattern[j]) { match = false; break; }
+                }
+                if (match) return i;
+            }
+            return -1;
+        }
+
+
 
         public void Send(string commandType, params string[] args)
         {
@@ -145,89 +195,78 @@ namespace Tanki.Networking
                 payload += ProtocolConstants.ArgumentDelimiter + string.Join(ProtocolConstants.ArgumentDelimiter, args);
             }
 
-            // 1. Generate shifted string (mirroring Flash String.fromCharCode logic)
             int key = (_lastKey + 1) % 9;
             if (key <= 0) key = 1;
             _lastKey = key;
 
+            // 1. Shift characters (Legacy Flash Style)
             string shiftedPayload = "";
+            int shift = key + 1;
             for (int i = 0; i < payload.Length; i++)
             {
-                shiftedPayload += (char)((payload[i] + (key + 1)) & 0xFFFF);
+                shiftedPayload += (char)((payload[i] + shift) & 0xFFFF);
             }
 
-            // 2. Convert to UTF-8 bytes (mirroring Flash writeUTFBytes)
-            byte[] payloadBytes = Encoding.UTF8.GetBytes(shiftedPayload);
-            byte[] encryptedBytes = new byte[payloadBytes.Length + 1];
-            encryptedBytes[0] = (byte)((key + '0') & 0xFF);
-            Buffer.BlockCopy(payloadBytes, 0, encryptedBytes, 1, payloadBytes.Length);
+            // 2. Add key prefix
+            string finalString = key.ToString() + shiftedPayload;
 
-            // 3. Add delimiter and send
+            // 3. Convert to UTF-8 bytes (writeUTFBytes)
+            byte[] payloadBytes = Encoding.UTF8.GetBytes(finalString);
+            
+            // 4. Add plain delimiter (~dne)
             byte[] delimiter = Encoding.ASCII.GetBytes(ProtocolConstants.CommandDelimiter);
-            byte[] finalPacket = new byte[encryptedBytes.Length + delimiter.Length];
-            Buffer.BlockCopy(encryptedBytes, 0, finalPacket, 0, encryptedBytes.Length);
-            Buffer.BlockCopy(delimiter, 0, finalPacket, encryptedBytes.Length, delimiter.Length);
+            byte[] finalPacket = new byte[payloadBytes.Length + delimiter.Length];
+            
+            Buffer.BlockCopy(payloadBytes, 0, finalPacket, 0, payloadBytes.Length);
+            Buffer.BlockCopy(delimiter, 0, finalPacket, payloadBytes.Length, delimiter.Length);
 
             try
             {
                 if (_stream != null && _stream.CanWrite)
                 {
-                    _stream.BeginWrite(finalPacket, 0, finalPacket.Length, null, null);
+                    _stream.Write(finalPacket, 0, finalPacket.Length);
                     Debug.Log($"[Network] → {payload} (key: {key})");
                 }
             }
             catch (Exception e)
             {
                 Debug.LogError($"[Network] Send error: {e.Message}");
+                Disconnect();
             }
         }
 
-        private string Decrypt(string encrypted)
+        private string Decrypt(byte[] encrypted)
         {
-            if (string.IsNullOrEmpty(encrypted)) return null;
+            if (encrypted == null || encrypted.Length == 0) return null;
 
-            char firstChar = encrypted[0];
-            if (firstChar < '1' || firstChar > '8')
+            // 1. Decode UTF-8 (readUTFBytes)
+            string data = Encoding.UTF8.GetString(encrypted);
+            
+            int key = data[0] - '0';
+            if (key < 1 || key > 8) return data;
+
+            // 2. Unshift characters
+            char[] unshifted = new char[data.Length - 1];
+            int shift = key + 1;
+            for (int i = 1; i < data.Length; i++)
             {
-                return encrypted;
+                unshifted[i - 1] = (char)((data[i] - shift) & 0xFFFF);
             }
 
-            try
-            {
-                int key = firstChar - '0';
-                string result = "";
-
-                for (int i = 1; i < encrypted.Length; i++)
-                {
-                    result += (char)((encrypted[i] - (key + 1)) & 0xFFFF);
-                }
-
-                return result;
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[Network] Decrypt error on packet starting with '{firstChar}': {e.Message}");
-                return null;
-            }
+            return new string(unshifted);
         }
 
         public void Disconnect()
         {
+            State = ConnectionState.Disconnected;
             _stream?.Close();
             _client?.Close();
             _client = null;
             
-            if (UnityMainThreadDispatcher.Instance != null)
-            {
-                UnityMainThreadDispatcher.Instance.Enqueue(() => {
-                    Debug.Log("[Network] Disconnected.");
-                    _onDisconnected?.Raise();
-                });
-            }
-            else
-            {
-                Debug.Log("[Network] Disconnected (Main thread dispatcher already destroyed).");
-            }
+            UnityMainThreadDispatcher.EnqueueAction(() => {
+                Debug.Log("[Network] Disconnected.");
+                _onDisconnected?.Raise();
+            });
         }
 
         private void OnDestroy() => Disconnect();

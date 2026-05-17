@@ -17,3 +17,4 @@ MonoBehaviour:
   Crystals: {fileID: 11400000, guid: 6b405aa4e21342645a3f6851146e85c5, type: 2}
   Score: {fileID: 11400000, guid: e9e730f939502634c9b1e1c9228026e5, type: 2}
   NextRankScore: {fileID: 11400000, guid: 253944a57de660c42aaa7c5d8290137f, type: 2}
+  IsPremium: {fileID: 11400000, guid: 9b776e108d6b7474e886b15ac7afd437, type: 2}

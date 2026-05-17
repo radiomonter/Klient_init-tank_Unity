@@ -9,7 +9,11 @@ namespace Tanki.UI
         [SerializeField] private Transform _container;
         [SerializeField] private Sprite _frameSprite;
         [SerializeField] private Sprite _cornerSprite;
+        [SerializeField] private Sprite _bgTile;
         
+        [System.Serializable]
+        public class NewsList { public NewsData[] news; }
+
         [System.Serializable]
         public class NewsData
         {
@@ -20,159 +24,145 @@ namespace Tanki.UI
             public string text;
         }
 
-        [System.Serializable]
-        public class NewsList
-        {
-            public NewsData[] news;
-        }
-
         public void SetNewsJson(string json)
         {
             try
             {
-                // Clear old news
-                foreach (Transform child in _container)
+                if (_container == null) return;
+                foreach (Transform child in _container) { if (child != null) Destroy(child.gameObject); }
+                if (string.IsNullOrEmpty(json)) return;
+
+                NewsList list = null;
+                string trimmed = json.Trim();
+                
+                if (trimmed.StartsWith("{") && trimmed.Contains("\"news\""))
                 {
-                    Destroy(child.gameObject);
+                    // It's already a wrapper! (Either our new InitMessagesWrapper or something similar)
+                    list = JsonUtility.FromJson<NewsList>(json);
+                }
+                else if (trimmed.StartsWith("["))
+                {
+                    // It's a raw array, use legacy wrapping logic
+                    list = JsonUtility.FromJson<NewsList>("{\"news\":" + json + "}");
                 }
 
-                NewsList list = JsonUtility.FromJson<NewsList>("{\"news\":" + json + "}");
-                if (list == null || list.news == null) return;
+                if (list == null || list.news == null) 
+                {
+                    Debug.LogWarning("[News] Could not parse news JSON. Root content might be missing.");
+                    return;
+                }
 
                 foreach (var item in list.news)
                 {
-                    CreateNewsItem(item);
+                    if (item != null) CreateNewsItem(item);
                 }
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError("[News] Error parsing JSON: " + e.Message);
-            }
+            catch (System.Exception e) { Debug.LogError("[News] SetNewsJson Error: " + e.Message); }
         }
 
         private void CreateNewsItem(NewsData data)
         {
-            // Root for the item
-            GameObject root = new GameObject("NewsItem_" + data.id, typeof(RectTransform));
+            if (data == null || _container == null) return;
+
+            // 1. Root Container
+            GameObject root = new GameObject("NewsItem", typeof(RectTransform));
             root.transform.SetParent(_container, false);
             VerticalLayoutGroup rootVlg = root.AddComponent<VerticalLayoutGroup>();
-            rootVlg.childControlHeight = true;
-            rootVlg.childForceExpandHeight = false;
-            rootVlg.childControlWidth = true;
-            rootVlg.childForceExpandWidth = true;
-            rootVlg.spacing = 4;
+            rootVlg.childControlHeight = true; rootVlg.childForceExpandHeight = false;
+            rootVlg.childControlWidth = true; rootVlg.childForceExpandWidth = true;
+            rootVlg.padding = new RectOffset(10, 10, 5, 15);
+            rootVlg.spacing = 5;
 
-            // Date Header
-            GameObject dateObj = new GameObject("NewsDate_Label", typeof(RectTransform));
+            // 2. Date
+            GameObject dateObj = new GameObject("Date", typeof(Text));
             dateObj.transform.SetParent(root.transform, false);
-            Text dateTxt = dateObj.AddComponent<Text>();
-            // Use LegacyRuntime or default font safely
-            Font legacyFont = Resources.Load<Font>("LegacyRuntime");
-            if (legacyFont == null) legacyFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            
-            dateTxt.font = legacyFont;
+            Text dateTxt = dateObj.GetComponent<Text>();
+            dateTxt.font = Resources.Load<Font>("LegacyRuntime") ?? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             dateTxt.text = FormatDate(data.date);
-            dateTxt.fontSize = 14; 
-            dateTxt.fontStyle = FontStyle.Bold;
-            dateTxt.color = new Color(1f, 0.95f, 0.5f); // Bright yellow-gold
-            dateTxt.alignment = TextAnchor.MiddleLeft;
-            dateObj.AddComponent<LayoutElement>().minHeight = 25;
-            
-            if (dateObj.GetComponent<Image>() != null) DestroyImmediate(dateObj.GetComponent<Image>());
-            Debug.Log($"[News] Created date item: '{dateTxt.text}' (raw: '{data.date}')");
+            dateTxt.fontSize = 13;
+            dateTxt.color = new Color(0.7f, 0.9f, 0.3f);
+            dateTxt.alignment = TextAnchor.MiddleCenter;
 
-            // Green Frame Box
-            GameObject boxObj = new GameObject("ContentBox", typeof(RectTransform));
-            boxObj.transform.SetParent(root.transform, false);
+            // 3. FrameBox (Main Box for Content + Borders)
+            GameObject frameBox = new GameObject("FrameBox", typeof(RectTransform));
+            frameBox.transform.SetParent(root.transform, false);
             
-            // Add semi-transparent neutral background
-            Image boxBg = boxObj.AddComponent<Image>();
-            boxBg.color = new Color(0.12f, 0.12f, 0.12f, 0.4f); 
-            boxBg.type = Image.Type.Sliced;
+            // Layout for content inside the frame
+            VerticalLayoutGroup fVlg = frameBox.AddComponent<VerticalLayoutGroup>();
+            fVlg.padding = new RectOffset(20, 20, 15, 15);
+            fVlg.spacing = 10;
+            fVlg.childControlHeight = true; fVlg.childForceExpandHeight = false;
+            fVlg.childControlWidth = true; fVlg.childForceExpandWidth = true;
             
-            GreenFrame.Create(boxObj, _frameSprite, _cornerSprite);
+            // Background
+            Image bg = frameBox.AddComponent<Image>();
+            bg.color = new Color(0, 0, 0, 0.3f);
             
-            VerticalLayoutGroup vlg = boxObj.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(20, 20, 20, 20);
-            vlg.spacing = 15;
-            vlg.childAlignment = TextAnchor.MiddleCenter;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandHeight = false;
-            vlg.childControlWidth = true;
-            vlg.childForceExpandWidth = true;
+            // DRAW THE BORDERS (They will ignore the VerticalLayoutGroup above)
+            GreenFrame.Create(frameBox, _frameSprite, _cornerSprite, new Color(0.4f, 1f, 0.4f, 1f));
+
+            // 4. Content (Separator + Image + Header + Body)
+            // Separator Line
+            GameObject sep = new GameObject("Separator", typeof(RectTransform), typeof(Image));
+            sep.transform.SetParent(frameBox.transform, false);
+            sep.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 2);
+            sep.GetComponent<Image>().color = new Color(0.4f, 1f, 0.4f, 0.3f); // Subtle green
+            sep.AddComponent<LayoutElement>().preferredHeight = 2;
 
             // Image
             if (!string.IsNullOrEmpty(data.image))
             {
-                GameObject imgObj = new GameObject("Image", typeof(RectTransform));
-                imgObj.transform.SetParent(boxObj.transform, false);
-                Image newsImg = imgObj.AddComponent<Image>();
-                newsImg.preserveAspect = true;
+                GameObject imgObj = new GameObject("Img", typeof(Image));
+                imgObj.transform.SetParent(frameBox.transform, false);
+                Image ni = imgObj.GetComponent<Image>(); ni.preserveAspect = true;
                 LayoutElement le = imgObj.AddComponent<LayoutElement>();
-                le.preferredWidth = 200;
-                le.preferredHeight = 120;
-                StartCoroutine(LoadImage(data.image, newsImg, le));
+                le.preferredWidth = 240; le.preferredHeight = 150;
+                StartCoroutine(LoadImage(data.image, ni, le));
             }
 
-            // Header/Body Text
-            GameObject textObj = new GameObject("Text", typeof(RectTransform));
-            textObj.transform.SetParent(boxObj.transform, false);
-            Text txt = textObj.AddComponent<Text>();
-            txt.font = dateTxt.font;
+            // Header & Text
+            GameObject txtObj = new GameObject("Txt", typeof(Text));
+            txtObj.transform.SetParent(frameBox.transform, false);
+            Text t = txtObj.GetComponent<Text>();
+            t.font = dateTxt.font; t.fontSize = 12; t.color = new Color(0.4f, 1f, 0.4f);
+            t.alignment = TextAnchor.UpperCenter; t.supportRichText = true;
+            t.horizontalOverflow = HorizontalWrapMode.Wrap;
             
-            string username = (_userData != null && _userData.Uid != null) ? _userData.Uid.Value : "Игрок";
-            string processedHeader = data.header.Replace("%USERNAME%", username);
-            string processedText = data.text.Replace("%USERNAME%", username);
-            
-            txt.text = "<size=15><b>" + processedHeader + "</b></size>\n\n" + processedText;
-            txt.fontSize = 13; 
-            txt.color = new Color(0.8f, 1f, 0.5f); // Light green text
-            txt.alignment = TextAnchor.UpperCenter; // Start from top
-            txt.horizontalOverflow = HorizontalWrapMode.Wrap;
-            txt.verticalOverflow = VerticalWrapMode.Truncate; // Better for layout consistency
-            txt.supportRichText = true;
-            
-            textObj.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            
-            // Ensure box expands to fit the text
-            boxObj.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            string uname = (_userData != null && _userData.Uid != null) ? _userData.Uid.Value : "Игрок";
+            t.text = "<color=#66FF66><b>" + (data.header ?? "").Replace("%USERNAME%", uname) + "</b></color>\n\n" + (data.text ?? "").Replace("%USERNAME%", uname);
+
+            // Magic sizing
+            txtObj.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            frameBox.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             root.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
         private System.Collections.IEnumerator LoadImage(string url, Image target, LayoutElement le)
         {
+            if (string.IsNullOrEmpty(url) || target == null) yield break;
             using (UnityEngine.Networking.UnityWebRequest www = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(url))
             {
                 yield return www.SendWebRequest();
-
                 if (www.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
                 {
-                    Texture2D texture = UnityEngine.Networking.DownloadHandlerTexture.GetContent(www);
-                    target.sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
-                    float aspect = (float)texture.height / texture.width;
-                    le.preferredHeight = le.preferredWidth * aspect;
+                    Texture2D tex = UnityEngine.Networking.DownloadHandlerTexture.GetContent(www);
+                    if (tex != null && target != null)
+                    {
+                        target.sprite = Sprite.Create(tex, new Rect(0,0,tex.width,tex.height), new Vector2(0.5f,0.5f));
+                        if (le != null) le.preferredHeight = le.preferredWidth * ((float)tex.height / tex.width);
+                    }
                 }
             }
         }
 
-        private string FormatDate(string rawDate)
+        private string FormatDate(string tsStr)
         {
-            if (string.IsNullOrEmpty(rawDate)) return "НОВОСТИ";
-            if (long.TryParse(rawDate, out long timestamp))
+            if (string.IsNullOrEmpty(tsStr)) return "НОВОСТИ";
+            if (long.TryParse(tsStr, out long ts))
             {
-                if (timestamp > 1000000000) 
-                {
-                    System.DateTime dt = new System.DateTime(1970, 1, 1, 0, 0, 0, System.DateTimeKind.Utc).AddMilliseconds(timestamp);
-                    return dt.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
-                }
+                if (ts > 1000000000) return new System.DateTime(1970,1,1,0,0,0,System.DateTimeKind.Utc).AddMilliseconds(ts).ToLocalTime().ToString("dd.MM.yyyy HH:mm");
             }
-            if (rawDate.Length < 3) 
-            {
-                // Try to see if it's a number anyway
-                if (int.TryParse(rawDate, out int num)) return "Новость #" + num;
-                return "НОВОСТИ";
-            }
-            return rawDate;
+            return tsStr;
         }
     }
 }

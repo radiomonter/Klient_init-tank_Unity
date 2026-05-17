@@ -14,7 +14,7 @@ namespace Tanki.Networking
             public const string Garage = "garage";
             public const string Battle = "battle";
             public const string Ping = "ping";
-            public const string LobbyChat = "lobby_chat";
+            public const string LobbyChat = "lobby";
             public const string System = "system";
             public const string Restore = "restore";
             public const string BattleSelect = "battle_select";

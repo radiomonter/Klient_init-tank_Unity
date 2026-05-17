@@ -19,7 +19,7 @@ namespace Tanki.Networking
         {
             var commands = new List<Command>();
             var rawCommands = rawData.Split(new[] { ProtocolConstants.CommandDelimiter }, System.StringSplitOptions.RemoveEmptyEntries);
-
+            
             foreach (var rawCmd in rawCommands)
             {
                 var parts = rawCmd.Split(new[] { ProtocolConstants.ArgumentDelimiter }, System.StringSplitOptions.None);

@@ -36,6 +36,12 @@ namespace Tanki.Core
 
         public void Enqueue(Action action)
         {
+            EnqueueAction(action);
+        }
+
+        public static void EnqueueAction(Action action)
+        {
+            Debug.Log("[Dispatcher] Enqueuing action...");
             lock (_executionQueue)
             {
                 _executionQueue.Enqueue(action);
@@ -48,6 +54,7 @@ namespace Tanki.Core
             {
                 while (_executionQueue.Count > 0)
                 {
+                    Debug.Log("[Dispatcher] Dequeuing and executing action...");
                     _executionQueue.Dequeue().Invoke();
                 }
             }

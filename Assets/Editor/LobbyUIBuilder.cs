@@ -9,6 +9,7 @@ using System.Reflection;
 using System.IO;
 using Tanki.Models;
 using Tanki.Core.Variables;
+using System.Collections.Generic;
 
 namespace Tanki.Editor
 {
@@ -16,43 +17,94 @@ namespace Tanki.Editor
     {
         private const string ASSET_PATH = "Assets/Textures/UI/images/";
 
+        private static Font GetLegacyFont()
+        {
+            Font font = Resources.Load<Font>("LegacyRuntime");
+            if (font == null) font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            return font;
+        }
+
+        private static void PopulateRankSettings(RankSettingsSO settings)
+        {
+            if (settings == null) return;
+
+            var defaultSmall = new System.Collections.Generic.List<Sprite>();
+            var premiumSmall = new System.Collections.Generic.List<Sprite>();
+
+            // Small Ranks (Default)
+            for (int i = 1; i <= 31; i++)
+            {
+                string name = $"DefaultRanksSmallRank{i:00}.png";
+                defaultSmall.Add(EnsureIsSprite("ranks/DefaultRanksSmallRank/" + name));
+            }
+
+            // Small Ranks (Premium)
+            for (int i = 1; i <= 31; i++)
+            {
+                string name = $"PremiumRankSmallRank{i:00}.png";
+                premiumSmall.Add(EnsureIsSprite("ranks/PremiumRankSmallRank/" + name));
+            }
+
+            SerializedObject so = new SerializedObject(settings);
+            SerializedProperty dsProp = so.FindProperty("defaultRanksSmall");
+            SerializedProperty psProp = so.FindProperty("premiumRanksSmall");
+
+            dsProp.arraySize = defaultSmall.Count;
+            for (int i = 0; i < defaultSmall.Count; i++) dsProp.GetArrayElementAtIndex(i).objectReferenceValue = defaultSmall[i];
+
+            psProp.arraySize = premiumSmall.Count;
+            for (int i = 0; i < premiumSmall.Count; i++) psProp.GetArrayElementAtIndex(i).objectReferenceValue = premiumSmall[i];
+
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(settings);
+        }
+
         private static Sprite EnsureIsSprite(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
 
-            string path = name.StartsWith("Assets") ? name : ASSET_PATH + name;
-            
-            // Try to find the asset if it doesn't exist at exact path (handle ID prefixes)
-            if (!File.Exists(path))
+            string fileName = Path.GetFileNameWithoutExtension(name);
+            string[] guids = AssetDatabase.FindAssets(fileName + " t:texture");
+            string path = "";
+
+            if (guids.Length > 0)
             {
-                string fileName = Path.GetFileName(name);
-                string[] guids = AssetDatabase.FindAssets(Path.GetFileNameWithoutExtension(fileName));
-                foreach (var guid in guids)
-                {
-                    string p = AssetDatabase.GUIDToAssetPath(guid);
-                    if (p.Contains(ASSET_PATH))
-                    {
-                        path = p;
-                        break;
-                    }
-                }
+                path = AssetDatabase.GUIDToAssetPath(guids[0]);
+            }
+            else
+            {
+                path = name.StartsWith("Assets") ? name : ASSET_PATH + name;
             }
 
             TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer != null)
             {
-                TextureImporterSettings settings = new TextureImporterSettings();
-                importer.ReadTextureSettings(settings);
-                if (importer.textureType != TextureImporterType.Sprite || settings.spriteMeshType != SpriteMeshType.FullRect)
+                bool changed = false;
+                if (importer.textureType != TextureImporterType.Sprite) { importer.textureType = TextureImporterType.Sprite; changed = true; }
+                if (importer.spriteImportMode != SpriteImportMode.Single) { importer.spriteImportMode = SpriteImportMode.Single; changed = true; }
+                
+                // Для ProgressBarCentr обязателен Repeat для корректного тайлинга
+                if (fileName.Contains("Centr"))
                 {
-                    importer.textureType = TextureImporterType.Sprite;
-                    settings.spriteMeshType = SpriteMeshType.FullRect;
-                    importer.SetTextureSettings(settings);
+                    if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; changed = true; }
+                }
+                
+
+                if (changed)
+                {
                     importer.SaveAndReimport();
+                    AssetDatabase.Refresh();
                 }
             }
-            return AssetDatabase.LoadAssetAtPath<Sprite>(path);
+
+            Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(path);
+            if (sprite == null)
+            {
+                Debug.LogError($"[LobbyUIBuilder] FAILED to load sprite at path: {path}");
+            }
+            return sprite;
         }
+
 
         [MenuItem("Tanki/UI/Build Lobby UI")]
         public static void BuildUI()
@@ -72,6 +124,13 @@ namespace Tanki.Editor
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280, 720);
 
+            if (Object.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+            {
+                GameObject eventSystem = new GameObject("EventSystem");
+                eventSystem.AddComponent<UnityEngine.EventSystems.EventSystem>();
+                eventSystem.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+            }
+
             GameObject lobbyUIObj = new GameObject("LobbyUI");
             lobbyUIObj.transform.SetParent(canvasObj.transform, false);
             RectTransform rt = lobbyUIObj.AddComponent<RectTransform>();
@@ -85,7 +144,7 @@ namespace Tanki.Editor
             RectTransform gRect = globalBg.AddComponent<RectTransform>();
             Image gImg = globalBg.AddComponent<Image>();
             
-            Sprite bgSprite = AssetDatabase.LoadAssetAtPath<Sprite>("Assets/Textures/UI/images/740_alternativa.tanks.bg.BackgroundService_bitmapBg.png");
+            Sprite bgSprite = AssetDatabase.LoadAssetAtPath<Sprite>(ASSET_PATH + "BITMAP/bitmapBg.png");
             if (bgSprite != null)
             {
                 gImg.sprite = bgSprite;
@@ -96,18 +155,27 @@ namespace Tanki.Editor
             {
                 gImg.color = new Color(0.05f, 0.05f, 0.06f, 1f);
             }
+            gImg.raycastTarget = false; // Never block raycasts with the background!
             
             gRect.anchorMin = Vector2.zero; gRect.anchorMax = Vector2.one;
             gRect.offsetMin = Vector2.zero; gRect.offsetMax = Vector2.zero;
 
-            GameObject topPanel = BuildTopPanel(lobbyUIObj);
+            // Ensure UserDataSO is fully linked
+            UserDataSO userData = EnsureAsset<UserDataSO>("Assets/Data/User Data.asset");
+            if (userData != null && userData.IsPremium == null)
+            {
+                userData.IsPremium = EnsureAsset<BoolVariable>("Assets/Data/Variables/IsPremium.asset");
+                EditorUtility.SetDirty(userData);
+            }
             
+            GameObject topPanel = BuildTopPanel(lobbyUIObj);
+
             GameObject mainContent = new GameObject("MainContent");
             mainContent.transform.SetParent(lobbyUIObj.transform, false);
             RectTransform mainRect = mainContent.AddComponent<RectTransform>();
             mainRect.anchorMin = Vector2.zero; mainRect.anchorMax = Vector2.one;
             mainRect.offsetMin = new Vector2(5, 5);
-            mainRect.offsetMax = new Vector2(-5, -60);
+            mainRect.offsetMax = new Vector2(-5, -75);
 
             float col1End = 0.28f;
             float col2End = 0.75f;
@@ -134,7 +202,7 @@ namespace Tanki.Editor
             RectTransform blRect = battleListPanel.GetComponent<RectTransform>();
             blRect.anchorMin = Vector2.zero; blRect.anchorMax = Vector2.one;
             blRect.offsetMin = Vector2.zero; blRect.offsetMax = Vector2.zero;
-            AddHeaderText(battleListPanel, "СПИСОК БИТВ", "HeaderBattleList.png");
+            AddImageHeader(battleListPanel, "battleListRuHeaderClass.png");
 
             GameObject col3 = new GameObject("Column3_BattleInfo");
             col3.transform.SetParent(mainContent.transform, false);
@@ -152,7 +220,7 @@ namespace Tanki.Editor
             RectTransform biRect = battleInfoPanel.GetComponent<RectTransform>();
             biRect.anchorMin = Vector2.zero; biRect.anchorMax = Vector2.one;
             biRect.offsetMin = Vector2.zero; biRect.offsetMax = Vector2.zero;
-            AddHeaderText(battleInfoPanel, "ИНФОРМАЦИЯ О БИТВЕ", "HeaderBattleInfo.png");
+            AddImageHeader(battleInfoPanel, "battleInfoRuHeaderClass.png");
 
             GameObject garageView = new GameObject("GarageView");
             garageView.transform.SetParent(col3.transform, false);
@@ -164,7 +232,7 @@ namespace Tanki.Editor
             garageWin.GetComponent<RectTransform>().anchorMax = Vector2.one;
             garageWin.GetComponent<RectTransform>().offsetMin = Vector2.zero;
             garageWin.GetComponent<RectTransform>().offsetMax = Vector2.zero;
-            AddHeaderText(garageWin, "МОЙ ТАНК", "HeaderGarage.png");
+            AddImageHeader(garageWin, "yourTankRuHeaderClass.png");
             garageView.SetActive(false);
 
             GameObject settingsView = new GameObject("SettingsView");
@@ -188,19 +256,44 @@ namespace Tanki.Editor
             }
             
             ChatController chatCtrl = SetupCommunicationPanel(communicationPanel);
-            AddHeaderText(communicationPanel, "ЧАТ", "HeaderChat.png");
             SetupBattleList(battleListPanel);
             NewsController newsCtrl = col1.GetComponentInChildren<NewsController>();
 
-            LobbyController lobbyCtrl = Object.FindObjectOfType<LobbyController>();
-            if (lobbyCtrl != null)
+            // Setup Garage and Lobby view switching properly
+            so.FindProperty("_newsPanel").objectReferenceValue = communicationPanel;
+            so.FindProperty("_battleListPanel").objectReferenceValue = battleListPanel;
+            so.FindProperty("_battleInfoPanel").objectReferenceValue = battleInfoPanel;
+            so.FindProperty("_chatPanel").objectReferenceValue = communicationPanel.transform.Find("ContentArea/ChatView")?.gameObject;
+
+            // Re-link to LobbyController
+            LobbyController lobby = Object.FindObjectOfType<LobbyController>(true);
+            if (lobby == null)
             {
-                SerializedObject soLobby = new SerializedObject(lobbyCtrl);
+                GameObject gameCtrl = GameObject.Find("GameController");
+                if (gameCtrl == null)
+                {
+                    gameCtrl = new GameObject("GameController");
+                    Undo.RegisterCreatedObjectUndo(gameCtrl, "Create GameController");
+                }
+                lobby = gameCtrl.GetComponent<LobbyController>() ?? gameCtrl.AddComponent<LobbyController>();
+                Debug.Log("[UI Builder] Created/Found LobbyController on root GameController.");
+            }
+
+            // Move GameController to root if it's a child by mistake
+            if (lobby.transform.parent != null)
+            {
+                lobby.transform.SetParent(null);
+                Debug.Log("[UI Builder] Moved LobbyController to root.");
+            }
+
+            if (lobby != null)
+            {
+                SerializedObject soLobby = new SerializedObject(lobby);
                 soLobby.FindProperty("_lobbyUI").objectReferenceValue = controller;
                 soLobby.FindProperty("_chatUI").objectReferenceValue = chatCtrl;
-                
-                newsCtrl = communicationPanel.GetComponent<NewsController>();
                 soLobby.FindProperty("_newsUI").objectReferenceValue = newsCtrl;
+                
+                Debug.Log($"[UI Builder] Linked controllers to LobbyController: Chat={chatCtrl != null}, News={newsCtrl != null}");
                 
                 if (newsCtrl != null)
                 {
@@ -215,13 +308,19 @@ namespace Tanki.Editor
                 if (network != null) soLobby.FindProperty("_network").objectReferenceValue = network;
                 
                 soLobby.ApplyModifiedProperties();
-                EditorUtility.SetDirty(lobbyCtrl);
+                
+                // Populate Rank Settings
+                RankSettingsSO rankSettings = EnsureAsset<RankSettingsSO>("Assets/Data/RankSettings.asset");
+                PopulateRankSettings(rankSettings);
+                
+                EditorUtility.SetDirty(lobby);
+                Debug.Log("[UI Builder] LobbyController and RankSettings populated.");
             }
 
             if (!isPlaying)
             {
                 EditorUtility.SetDirty(controller);
-                if (lobbyCtrl != null) EditorUtility.SetDirty(lobbyCtrl);
+                if (lobby != null) EditorUtility.SetDirty(lobby);
                 UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
             }
 
@@ -253,6 +352,7 @@ namespace Tanki.Editor
                 soUser.FindProperty("Crystals").objectReferenceValue = EnsureAsset<IntVariable>(dataPath + "/Variables/Crystals.asset");
                 soUser.FindProperty("Score").objectReferenceValue = EnsureAsset<IntVariable>(dataPath + "/Variables/Score.asset");
                 soUser.FindProperty("NextRankScore").objectReferenceValue = EnsureAsset<IntVariable>(dataPath + "/Variables/NextRankScore.asset");
+                soUser.FindProperty("IsPremium").objectReferenceValue = EnsureAsset<BoolVariable>(dataPath + "/Variables/IsPremium.asset");
                 soUser.ApplyModifiedProperties();
                 EditorUtility.SetDirty(userData);
             }
@@ -274,376 +374,456 @@ namespace Tanki.Editor
 
         private static GameObject BuildTopPanel(GameObject parent)
         {
-            GameObject top = new GameObject("TopPanel");
-            top.transform.SetParent(parent.transform, false);
-            RectTransform rect = top.AddComponent<RectTransform>();
+            GameObject topPanel = new GameObject("TopPanel");
+            topPanel.transform.SetParent(parent.transform, false);
+            RectTransform rect = topPanel.AddComponent<RectTransform>();
             rect.anchorMin = new Vector2(0, 1); rect.anchorMax = new Vector2(1, 1);
             rect.anchoredPosition = new Vector2(0, -30); rect.sizeDelta = new Vector2(0, 60);
 
-            Image bg = top.AddComponent<Image>();
-            bg.color = new Color(0, 0, 0, 0);
+            // Rank Icon
+            GameObject rankGo = new GameObject("RankIcon");
+            rankGo.transform.SetParent(topPanel.transform, false);
+            RectTransform rankRect = rankGo.AddComponent<RectTransform>();
+            rankRect.anchorMin = new Vector2(0, 0.5f); rankRect.anchorMax = new Vector2(0, 0.5f);
+            rankRect.anchoredPosition = new Vector2(35, 0); rankRect.sizeDelta = new Vector2(52, 52);
+            Image rankImg = rankGo.AddComponent<Image>();
+            rankImg.sprite = EnsureIsSprite("ranks/DefaultRanksBigRank/DefaultRanksBigRank01.png");
+            rankImg.preserveAspect = true;
 
-            GameObject playerSection = new GameObject("PlayerSection");
-            playerSection.AddComponent<RectTransform>();
-            playerSection.transform.SetParent(top.transform, false);
-            RectTransform psRect = playerSection.GetComponent<RectTransform>();
-            psRect.anchorMin = new Vector2(0, 0); psRect.anchorMax = new Vector2(0.5f, 1);
-            psRect.offsetMin = new Vector2(15, 0); psRect.offsetMax = Vector2.zero;
+            // === ЕДИНЫЙ СТАТУС-БАР (Опыт + Разделитель + Кристаллы) ===
+            GameObject barContainer = new GameObject("MainStatusBar");
+            barContainer.transform.SetParent(topPanel.transform, false);
+            RectTransform barRt = barContainer.AddComponent<RectTransform>();
+            barRt.anchorMin = new Vector2(0, 0.5f); barRt.anchorMax = new Vector2(0.55f, 0.5f);
+            barRt.offsetMin = new Vector2(65, -14.5f); barRt.offsetMax = new Vector2(0, 14.5f);
 
-            HorizontalLayoutGroup hlg = playerSection.AddComponent<HorizontalLayoutGroup>();
-            hlg.childAlignment = TextAnchor.MiddleLeft; hlg.spacing = 15;
-            hlg.childControlWidth = false; hlg.childForceExpandWidth = false;
-
-            GameObject rank = new GameObject("Rank", typeof(RectTransform));
-            rank.transform.SetParent(playerSection.transform, false);
-            rank.GetComponent<RectTransform>().sizeDelta = new Vector2(24, 24);
-            Image rankImg = rank.AddComponent<Image>();
-            Sprite rankSprite = EnsureIsSprite("Rank10.png");
-            if (rankSprite != null) rankImg.sprite = rankSprite;
-            else rankImg.color = new Color(1, 1, 1, 0.1f);
-
-            GameObject nameExp = new GameObject("NameExp", typeof(RectTransform));
-            nameExp.transform.SetParent(playerSection.transform, false);
-            nameExp.GetComponent<RectTransform>().sizeDelta = new Vector2(150, 40);
-            VerticalLayoutGroup vlg = nameExp.AddComponent<VerticalLayoutGroup>();
-            vlg.childAlignment = TextAnchor.MiddleLeft; vlg.spacing = 2;
-
-            Text nameTxt = new GameObject("Name", typeof(Text)).GetComponent<Text>();
-            nameTxt.transform.SetParent(nameExp.transform, false);
-            nameTxt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            nameTxt.text = "PlayerName"; nameTxt.fontSize = 14; nameTxt.color = new Color(0.7f, 1f, 0.3f);
-
-            GameObject expBarObj = new GameObject("ExpBar", typeof(RectTransform));
-            expBarObj.transform.SetParent(nameExp.transform, false);
-            expBarObj.GetComponent<RectTransform>().sizeDelta = new Vector2(150, 10);
-            Slider expSlider = expBarObj.AddComponent<Slider>();
-            expBarObj.AddComponent<Image>().color = new Color(0.2f, 0.2f, 0.2f, 1f);
-
-            GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
-            fillArea.transform.SetParent(expBarObj.transform, false);
-            RectTransform faRect = fillArea.GetComponent<RectTransform>();
-            faRect.anchorMin = Vector2.zero; faRect.anchorMax = Vector2.one;
-            faRect.offsetMin = new Vector2(1, 1); faRect.offsetMax = new Vector2(-1, -1);
-
-            GameObject fill = new GameObject("Fill", typeof(RectTransform));
-            fill.transform.SetParent(fillArea.transform, false);
-            Image fillImg = fill.AddComponent<Image>();
-            fillImg.color = new Color(0.4f, 0.8f, 0.1f, 1f);
-            expSlider.fillRect = fill.GetComponent<RectTransform>();
-            expSlider.minValue = 0; expSlider.maxValue = 100; expSlider.value = 45;
-
-            GameObject cryGroup = new GameObject("Crystals", typeof(RectTransform));
-            cryGroup.transform.SetParent(playerSection.transform, false);
-            cryGroup.GetComponent<RectTransform>().sizeDelta = new Vector2(100, 30);
-            HorizontalLayoutGroup cryHlg = cryGroup.AddComponent<HorizontalLayoutGroup>();
-            cryHlg.childAlignment = TextAnchor.MiddleLeft; cryHlg.spacing = 5;
-
-            GameObject ci = new GameObject("Icon", typeof(RectTransform));
-            ci.transform.SetParent(cryGroup.transform, false);
-            ci.GetComponent<RectTransform>().sizeDelta = new Vector2(18, 18);
-            Image cryImg = ci.AddComponent<Image>();
-            Sprite crySprite = EnsureIsSprite("CrystalIcon.png");
-            if (crySprite != null) cryImg.sprite = crySprite;
-            else cryImg.color = new Color(0, 0.8f, 1f, 0.5f);
-
-            Text cryTxt = new GameObject("Amount", typeof(Text)).GetComponent<Text>();
-            cryTxt.transform.SetParent(cryGroup.transform, false);
-            cryTxt.font = nameTxt.font; cryTxt.text = "0"; cryTxt.fontSize = 14; cryTxt.color = Color.white;
-
-            GameObject scoreGroup = new GameObject("Score", typeof(RectTransform));
-            scoreGroup.transform.SetParent(playerSection.transform, false);
-            scoreGroup.GetComponent<RectTransform>().sizeDelta = new Vector2(100, 30);
-            Text scoreTxt = new GameObject("Value", typeof(Text)).GetComponent<Text>();
-            scoreTxt.transform.SetParent(scoreGroup.transform, false);
-            scoreTxt.font = nameTxt.font; scoreTxt.text = "0"; scoreTxt.fontSize = 14; scoreTxt.color = new Color(0.9f, 0.9f, 0.1f);
-            scoreTxt.GetComponent<RectTransform>().anchorMin = Vector2.zero; scoreTxt.GetComponent<RectTransform>().anchorMax = Vector2.one;
-            scoreTxt.alignment = TextAnchor.MiddleLeft;
-
-            GameObject menu = new GameObject("Menu", typeof(RectTransform));
-            menu.transform.SetParent(top.transform, false);
-            RectTransform mRect = menu.GetComponent<RectTransform>();
-            mRect.anchorMin = new Vector2(0.5f, 0); mRect.anchorMax = new Vector2(1, 1);
-            mRect.offsetMin = new Vector2(0, 0); mRect.offsetMax = new Vector2(-20, 0);
-
-            CreateMenuButton(menu, "Battles", new Vector2(-210, 0), "БИТВЫ");
-            CreateMenuButton(menu, "Garage", new Vector2(-110, 0), "ГАРАЖ");
-            CreateMenuButton(menu, "Settings", new Vector2(-10, 0), "НАСТРОЙКИ");
-
-            TopPanelController ctrl = top.AddComponent<TopPanelController>();
+            // 1. Левый край
+            CreatePart(barContainer, "Left", "progress bar/ProgressBarLeft.png", new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(7, 29), Image.Type.Simple);
             
-            string varPath = "Assets/Data/Variables";
-            SerializedObject soTop = new SerializedObject(ctrl);
-            soTop.FindProperty("_uid").objectReferenceValue = EnsureAsset<StringVariable>(varPath + "/Uid.asset");
-            soTop.FindProperty("_rank").objectReferenceValue = EnsureAsset<IntVariable>(varPath + "/Rank.asset");
-            soTop.FindProperty("_crystals").objectReferenceValue = EnsureAsset<IntVariable>(varPath + "/Crystals.asset");
-            soTop.FindProperty("_score").objectReferenceValue = EnsureAsset<IntVariable>(varPath + "/Score.asset");
-            soTop.FindProperty("_nextRankScore").objectReferenceValue = EnsureAsset<IntVariable>(varPath + "/NextRankScore.asset");
+            // 2. Секция Опыта
+            GameObject expSec = new GameObject("ExpSection");
+            expSec.transform.SetParent(barContainer.transform, false);
+            RectTransform expRt = expSec.AddComponent<RectTransform>();
+            expRt.anchorMin = new Vector2(0, 0); expRt.anchorMax = new Vector2(1, 1);
+            expRt.offsetMin = new Vector2(7, 0); expRt.offsetMax = new Vector2(-155, 0); // Не наезжает на левый край
+
+            GameObject expBg = CreatePart(expSec, "BG", "progress bar/ProgressBarCentr.png", Vector2.zero, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero, Image.Type.Tiled);
+            RectTransform ebgRt = expBg.GetComponent<RectTransform>();
+            ebgRt.anchorMin = Vector2.zero; ebgRt.anchorMax = Vector2.one;
+            ebgRt.offsetMin = new Vector2(-1, 0); ebgRt.offsetMax = new Vector2(1, 0);
             
-            soTop.FindProperty("_uidText").objectReferenceValue = nameTxt;
+            // Заливка опыта (используем сплошной цвет, так как оригинальный фон - это просто цвет)
+            GameObject expFillCont = new GameObject("FillContainer", typeof(RectTransform));
+            expFillCont.transform.SetParent(expSec.transform, false);
+            RectTransform efcRt = expFillCont.GetComponent<RectTransform>();
+            expFillCont.AddComponent<RectMask2D>();
+            efcRt.anchorMin = Vector2.zero; efcRt.anchorMax = new Vector2(0.5f, 1);
+            efcRt.offsetMin = new Vector2(0, 2f); efcRt.offsetMax = new Vector2(0, -2f); // Центрируем по вертикали внутри рамки
+            
+            GameObject fillGo = new GameObject("Fill", typeof(RectTransform));
+            fillGo.transform.SetParent(expFillCont.transform, false);
+            RectTransform fillRt = fillGo.GetComponent<RectTransform>();
+            fillRt.anchorMin = Vector2.zero; fillRt.anchorMax = Vector2.one;
+            fillRt.offsetMin = Vector2.zero; fillRt.offsetMax = Vector2.zero;
+            
+            Image fillImg = fillGo.AddComponent<Image>();
+            fillImg.color = new Color(0.35f, 0.85f, 0.05f, 1f); // Ярко-зеленый цвет опыта
+
+            // Текст опыта
+            GameObject scoreGo = new GameObject("ScoreText");
+            scoreGo.transform.SetParent(expSec.transform, false);
+            RectTransform scoreRt = scoreGo.AddComponent<RectTransform>();
+            scoreRt.anchorMin = Vector2.zero; scoreRt.anchorMax = Vector2.one;
+            scoreRt.offsetMin = new Vector2(10, 0); scoreRt.offsetMax = new Vector2(-10, 0);
+            Text scoreTxt = scoreGo.AddComponent<Text>();
+            scoreTxt.font = GetLegacyFont(); scoreTxt.fontSize = 14; scoreTxt.fontStyle = FontStyle.Bold;
+            scoreTxt.color = new Color(0.07f, 1f, 0f); scoreTxt.alignment = TextAnchor.MiddleLeft;
+            scoreTxt.text = "10000 / 12300 Сержант Player";
+
+            // 3. РАЗДЕЛИТЕЛЬ (ProgressBarLeftRight)
+            CreatePart(barContainer, "Divider", "progress bar/ProgressBarLeftRight.png", new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(-145, 0), new Vector2(10, 29), Image.Type.Simple);
+
+            // 4. Секция Кристаллов
+            GameObject crySec = new GameObject("CrySection");
+            crySec.transform.SetParent(barContainer.transform, false); 
+            RectTransform cryRt = crySec.AddComponent<RectTransform>();
+            cryRt.anchorMin = new Vector2(1, 0); cryRt.anchorMax = new Vector2(1, 1);
+            cryRt.offsetMin = new Vector2(-145, 0); cryRt.offsetMax = new Vector2(-10, 0); // Между разделителем и краем
+            
+            GameObject cryBg = CreatePart(crySec, "BG", "progress bar/ProgressBarCentr.png", Vector2.zero, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero, Image.Type.Tiled);
+            RectTransform cbgRt = cryBg.GetComponent<RectTransform>();
+            cbgRt.anchorMin = Vector2.zero; cbgRt.anchorMax = Vector2.one;
+            cbgRt.offsetMin = new Vector2(-1, 0); cbgRt.offsetMax = new Vector2(1, 0); 
+            
+            GameObject cryTxtGo = new GameObject("Amount");
+            cryTxtGo.transform.SetParent(crySec.transform, false);
+            RectTransform ctRt = cryTxtGo.AddComponent<RectTransform>();
+            ctRt.anchorMin = Vector2.zero; ctRt.anchorMax = Vector2.one;
+            ctRt.offsetMin = new Vector2(5, 0); ctRt.offsetMax = new Vector2(-22, 0);
+            Text crysTxt = cryTxtGo.AddComponent<Text>();
+            crysTxt.font = GetLegacyFont(); crysTxt.fontSize = 12; crysTxt.color = Color.white;
+            crysTxt.alignment = TextAnchor.MiddleRight; crysTxt.text = "1 478 528";
+ 
+            // Иконка кристалла
+            GameObject crysIcon = new GameObject("Icon");
+            crysIcon.transform.SetParent(crySec.transform, false);
+            RectTransform ciRt = crysIcon.AddComponent<RectTransform>();
+            ciRt.anchorMin = new Vector2(1, 0.5f); ciRt.anchorMax = new Vector2(1, 0.5f);
+            ciRt.anchoredPosition = new Vector2(-12, 0); ciRt.sizeDelta = new Vector2(18, 18);
+            Image ciImg = crysIcon.AddComponent<Image>();
+            ciImg.sprite = EnsureIsSprite("IconCrystalClass.png");
+            ciImg.preserveAspect = true;
+
+            // 5. Правый край
+            CreatePart(barContainer, "Right", "progress bar/ProgressBarRight.png", new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(10, 29), Image.Type.Simple);
+
+            // === КНОПКИ ===
+            GameObject rightSec = new GameObject("RightSection");
+            rightSec.transform.SetParent(topPanel.transform, false);
+            RectTransform rsrt = rightSec.AddComponent<RectTransform>();
+            rsrt.anchorMin = new Vector2(0.55f, 0.5f); rsrt.anchorMax = new Vector2(1, 0.5f);
+            rsrt.offsetMin = new Vector2(10, -20); rsrt.offsetMax = new Vector2(-10, 20);
+            HorizontalLayoutGroup hlg = rightSec.AddComponent<HorizontalLayoutGroup>();
+            hlg.childAlignment = TextAnchor.MiddleRight; hlg.childControlWidth = false; hlg.childControlHeight = false; hlg.spacing = 4;
+
+            CreateTopMenuButton(rightSec, "Shop", "МАГАЗИН", "shopCrystals.png", "amber");
+            CreateTopMenuButton(rightSec, "Battles", "БИТВЫ", "startIconClass.png", "green");
+            CreateTopMenuButton(rightSec, "Garage", "ГАРАЖ", "weaponIconClass.png", "grey");
+            CreateTopMenuButton(rightSec, "Clan", "КЛАН", "clanIconClass.png", "grey");
+            
+            CreateSmallIconButton(rightSec, "Rating", "topClass.png");
+            CreateSmallIconButton(rightSec, "Friends", "friendsGreyClass.png");
+            CreateSmallIconButton(rightSec, "Invite", "inviteAFriendRuHeaderClass.png");
+            CreateSmallIconButton(rightSec, "Settings", "inventoryIconClass.png");
+            CreateSmallIconButton(rightSec, "Fullscreen", "activateFullscreenClass.png");
+            CreateSmallIconButton(rightSec, "Help", "helpRuHeaderClass.png");
+            CreateSmallIconButton(rightSec, "Exit", "closeButtonClass.png");
+
+            // Controller binding
+            TopPanelController controller = topPanel.AddComponent<TopPanelController>();
+            SerializedObject soTop = new SerializedObject(controller);
+            soTop.FindProperty("_uid").objectReferenceValue = AssetDatabase.LoadAssetAtPath<StringVariable>("Assets/Data/Variables/Uid.asset");
+            soTop.FindProperty("_rank").objectReferenceValue = AssetDatabase.LoadAssetAtPath<IntVariable>("Assets/Data/Variables/Rank.asset");
+            soTop.FindProperty("_crystals").objectReferenceValue = AssetDatabase.LoadAssetAtPath<IntVariable>("Assets/Data/Variables/Crystals.asset");
+            soTop.FindProperty("_score").objectReferenceValue = AssetDatabase.LoadAssetAtPath<IntVariable>("Assets/Data/Variables/Score.asset");
+            soTop.FindProperty("_nextRankScore").objectReferenceValue = AssetDatabase.LoadAssetAtPath<IntVariable>("Assets/Data/Variables/NextRankScore.asset");
+            soTop.FindProperty("_isPremium").objectReferenceValue = EnsureAsset<BoolVariable>("Assets/Data/Variables/IsPremium.asset");
+
+            soTop.FindProperty("_uidText").objectReferenceValue = scoreTxt;
             soTop.FindProperty("_rankIcon").objectReferenceValue = rankImg;
-            soTop.FindProperty("_crystalsText").objectReferenceValue = cryTxt;
+            soTop.FindProperty("_crystalsText").objectReferenceValue = crysTxt;
             soTop.FindProperty("_scoreText").objectReferenceValue = scoreTxt;
-            soTop.FindProperty("_rankProgress").objectReferenceValue = expSlider;
+            soTop.FindProperty("_progressFillContainer").objectReferenceValue = efcRt;
 
-            string[] guids = AssetDatabase.FindAssets("bitmapBigRank t:Sprite");
-            if (guids.Length > 0)
-            {
-                var spritesList = new System.Collections.Generic.List<Sprite>();
-                for(int i=0; i<40; i++) spritesList.Add(null);
+            // Load rank sprites
+            List<Sprite> rankSprites = new List<Sprite>();
+            for (int i = 1; i <= 31; i++) rankSprites.Add(EnsureIsSprite($"ranks/DefaultRanksBigRank/DefaultRanksBigRank{i:00}.png"));
+            SerializedProperty spSprites = soTop.FindProperty("_rankSprites");
+            spSprites.arraySize = rankSprites.Count;
+            for (int i = 0; i < rankSprites.Count; i++) spSprites.GetArrayElementAtIndex(i).objectReferenceValue = rankSprites[i];
 
-                foreach (var guid in guids)
-                {
-                    string path = AssetDatabase.GUIDToAssetPath(guid);
-                    Sprite s = AssetDatabase.LoadAssetAtPath<Sprite>(path);
-                    if (s != null)
-                    {
-                        string n = s.name;
-                        int lastRankIdx = n.LastIndexOf("Rank");
-                        if (lastRankIdx != -1)
-                        {
-                            string numStr = "";
-                            for(int i = lastRankIdx + 4; i < n.Length; i++)
-                            {
-                                if (char.IsDigit(n[i])) numStr += n[i];
-                                else break;
-                            }
-                            if (int.TryParse(numStr, out int rankIdx) && rankIdx < spritesList.Count)
-                                spritesList[rankIdx] = s;
-                        }
-                    }
-                }
-                
-                SerializedProperty rankArray = soTop.FindProperty("_rankSprites");
-                rankArray.arraySize = spritesList.Count;
-                for (int i = 0; i < spritesList.Count; i++)
-                    rankArray.GetArrayElementAtIndex(i).objectReferenceValue = spritesList[i];
-            }
-
+            // Load premium rank sprites
+            List<Sprite> premiumSprites = new List<Sprite>();
+            for (int i = 1; i <= 31; i++) premiumSprites.Add(EnsureIsSprite($"ranks/PremiumRankBigRank/PremiumRankBigRank{i:00}.png"));
+            SerializedProperty spPremium = soTop.FindProperty("_premiumRankSprites");
+            spPremium.arraySize = premiumSprites.Count;
+            for (int i = 0; i < premiumSprites.Count; i++) spPremium.GetArrayElementAtIndex(i).objectReferenceValue = premiumSprites[i];
+            
             soTop.ApplyModifiedProperties();
-
-            return top;
+            return topPanel;
         }
 
-        private static ChatController SetupCommunicationPanel(GameObject panel)
+        private static ChatController SetupCommunicationPanel(GameObject commPanel)
         {
-            // Фон "серой полки" - отдельный объект, смещенный вправо.
-            GameObject shelfObj = new GameObject("ShelfBG");
-            shelfObj.transform.SetParent(panel.transform, false);
-            RectTransform shelfRect = shelfObj.AddComponent<RectTransform>();
-            shelfRect.anchorMin = new Vector2(0, 1); shelfRect.anchorMax = new Vector2(1, 1);
-            shelfRect.pivot = new Vector2(0.5f, 1);
-            shelfRect.anchoredPosition = new Vector2(0, -1); 
-            shelfRect.sizeDelta = new Vector2(0, 25); 
-            // Сдвиньте полку вправо так, чтобы она начиналась после кнопок.
-            shelfRect.offsetMin = new Vector2(220, 0); 
-            shelfRect.offsetMax = new Vector2(0, 0);
+            Font legacyFont = GetLegacyFont();
+            
+            // Tabs container
+            GameObject tabsGo = new GameObject("Tabs", typeof(HorizontalLayoutGroup));
+            tabsGo.transform.SetParent(commPanel.transform, false);
+            RectTransform trt = tabsGo.GetComponent<RectTransform>();
+            trt.anchorMin = new Vector2(0, 1); trt.anchorMax = new Vector2(1, 1);
+            trt.anchoredPosition = new Vector2(0, -35);
+            trt.sizeDelta = new Vector2(0, 32);
 
-            Image shelfImg = shelfObj.AddComponent<Image>();
-            Sprite shelfSprite = EnsureIsSprite("957_resources.windowheaders.background.BackgroundHeader_shortBackgroundHeaderClass.png");
-            if (shelfSprite == null) shelfSprite = EnsureIsSprite("HeaderBackground.png");
-            
-            if (shelfSprite != null) {
-                shelfImg.sprite = shelfSprite;
-                shelfImg.type = Image.Type.Simple;
-            } else {
-                shelfImg.color = new Color(0.15f, 0.15f, 0.15f, 1f); 
-            }
-            
-            // Кнопки размещаются непосредственно дочерними элементами панели, чтобы избежать проблем со смещением родительского элемента.
-            GameObject newsTab = CreateCommunicationTab(panel, "NewsTab", "Новости", "1034_alternativa.tanks.gui.communication.button.TabIcons_newsIconClass.png", true);
-            GameObject chatTab = CreateCommunicationTab(panel, "ChatTab", "Чат", "770_alternativa.tanks.gui.communication.button.TabIcons_chatIconClass.png", false);
-            
-            newsTab.GetComponent<RectTransform>().anchoredPosition = new Vector2(11, -11);
-            chatTab.GetComponent<RectTransform>().anchoredPosition = new Vector2(118, -11); // 11 + 102 + 5
+            HorizontalLayoutGroup thlg = tabsGo.GetComponent<HorizontalLayoutGroup>();
+            thlg.padding = new RectOffset(10, 10, 0, 0);
+            thlg.spacing = 5;
+            thlg.childAlignment = TextAnchor.LowerLeft;
+            thlg.childControlWidth = false;
 
+            GameObject newsTabObj = CreateCommTab(tabsGo, "NewsTab", "НОВОСТИ", "newsIconClass.png", true);
+            GameObject chatTabObj = CreateCommTab(tabsGo, "ChatTab", "ЧАТ", "chatIconClass.png", false);
+
+            CommunicationPanelController commCtrl = commPanel.AddComponent<CommunicationPanelController>();
+            SerializedObject soComm = new SerializedObject(commCtrl);
+            soComm.FindProperty("newsTab").objectReferenceValue = newsTabObj.GetComponent<Button>();
+            soComm.FindProperty("chatTab").objectReferenceValue = chatTabObj.GetComponent<Button>();
+            soComm.FindProperty("newsIcon").objectReferenceValue = newsTabObj.transform.Find("Icon")?.GetComponent<Image>();
+            soComm.FindProperty("chatIcon").objectReferenceValue = chatTabObj.transform.Find("Icon")?.GetComponent<Image>();
+            
+            Text headerTitle = AddHeaderText(commPanel, "НОВОСТИ", "newsIconClass.png");
+            soComm.FindProperty("headerTitle").objectReferenceValue = headerTitle;
+            soComm.FindProperty("headerIcon").objectReferenceValue = headerTitle.transform.parent.Find("Icon")?.GetComponent<Image>();
+            
+            soComm.FindProperty("tabLeftActive").objectReferenceValue = EnsureIsSprite("leftDownClass_802.png");
+            soComm.FindProperty("tabCenterActive").objectReferenceValue = EnsureIsSprite("middleDownClass.png");
+            soComm.FindProperty("tabRightActive").objectReferenceValue = EnsureIsSprite("rightDownClass_951.png");
+            soComm.FindProperty("tabLeftInactive").objectReferenceValue = EnsureIsSprite("LEFT_497.png");
+            soComm.FindProperty("tabCenterInactive").objectReferenceValue = EnsureIsSprite("CENTER_499.png");
+            soComm.FindProperty("tabRightInactive").objectReferenceValue = EnsureIsSprite("RIGHT_498.png");
+            
+            soComm.FindProperty("newsIconSprite").objectReferenceValue = EnsureIsSprite("newsIconClass.png");
+            soComm.FindProperty("chatIconSprite").objectReferenceValue = EnsureIsSprite("chatIconClass.png");
+            
+            soComm.ApplyModifiedProperties();
+
+            // Content Area
             GameObject contentArea = new GameObject("ContentArea");
-            contentArea.transform.SetParent(panel.transform, false);
+            contentArea.transform.SetParent(commPanel.transform, false);
             RectTransform caRect = contentArea.AddComponent<RectTransform>();
             caRect.anchorMin = Vector2.zero; caRect.anchorMax = Vector2.one;
-            caRect.offsetMin = new Vector2(5, 5); caRect.offsetMax = new Vector2(-5, -45); 
+            caRect.offsetMin = new Vector2(11, 12); caRect.offsetMax = new Vector2(-11, -65); 
 
-            GameObject newsView = new GameObject("NewsView");
+            // News View
+            GameObject newsView = new GameObject("NewsView", typeof(RectTransform));
             newsView.transform.SetParent(contentArea.transform, false);
-            RectTransform nvRect = newsView.AddComponent<RectTransform>();
+            RectTransform nvRect = newsView.GetComponent<RectTransform>();
             nvRect.anchorMin = Vector2.zero; nvRect.anchorMax = Vector2.one;
             nvRect.offsetMin = Vector2.zero; nvRect.offsetMax = Vector2.zero;
-            
-            GameObject scrollObj = new GameObject("NewsScroll", typeof(RectTransform));
-            scrollObj.transform.SetParent(newsView.transform, false);
-            RectTransform sRect = scrollObj.GetComponent<RectTransform>();
-            sRect.anchorMin = Vector2.zero; sRect.anchorMax = Vector2.one;
-            sRect.offsetMin = new Vector2(5, 5); sRect.offsetMax = new Vector2(-5, -5);
-            scrollObj.AddComponent<Mask>();
-            scrollObj.AddComponent<Image>().color = new Color(0,0,0,0.01f);
+            newsView.AddComponent<Image>().color = new Color(0.06f, 0.15f, 0.06f, 1f);
 
-            GameObject newsContent = new GameObject("Content", typeof(RectTransform));
-            newsContent.transform.SetParent(scrollObj.transform, false);
-            RectTransform ncRect = newsContent.GetComponent<RectTransform>();
-            ncRect.anchorMin = new Vector2(0, 1); ncRect.anchorMax = new Vector2(1, 1);
-            ncRect.pivot = new Vector2(0.5f, 1);
-            ncRect.sizeDelta = new Vector2(0, 0); // Заполнить ширину родительского элемента
-            VerticalLayoutGroup vlg = newsContent.AddComponent<VerticalLayoutGroup>();
+            NewsController newsCtrl = newsView.AddComponent<NewsController>();
+            
+            // Add Scrollable container for news
+            GameObject scrollObj = new GameObject("Scroll", typeof(RectTransform), typeof(ScrollRect));
+            scrollObj.transform.SetParent(newsView.transform, false);
+            RectTransform srt = scrollObj.GetComponent<RectTransform>();
+            srt.anchorMin = Vector2.zero; srt.anchorMax = Vector2.one;
+            srt.offsetMin = new Vector2(5, 5); srt.offsetMax = new Vector2(-5, -5);
+            ScrollRect sr = scrollObj.GetComponent<ScrollRect>();
+            
+            GameObject viewport = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(Mask));
+            viewport.transform.SetParent(scrollObj.transform, false);
+            viewport.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+            viewport.GetComponent<RectTransform>().anchorMax = Vector2.one;
+            viewport.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+            viewport.GetComponent<Image>().color = new Color(0,0,0,0.1f);
+            viewport.GetComponent<Mask>().showMaskGraphic = false;
+            
+            GameObject content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            content.transform.SetParent(viewport.transform, false);
+            RectTransform crt = content.GetComponent<RectTransform>();
+            crt.anchorMin = new Vector2(0, 1); crt.anchorMax = new Vector2(1, 1);
+            crt.pivot = new Vector2(0.5f, 1);
+            crt.sizeDelta = new Vector2(0, 0);
+            
+            VerticalLayoutGroup vlg = content.GetComponent<VerticalLayoutGroup>();
             vlg.childControlHeight = true; vlg.childForceExpandHeight = false;
             vlg.childControlWidth = true; vlg.childForceExpandWidth = true;
-            vlg.spacing = 15; 
-            vlg.padding = new RectOffset(5, 5, 10, 10);
-            newsContent.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            
+            content.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            
+            sr.viewport = viewport.GetComponent<RectTransform>();
+            sr.content = crt;
+            sr.horizontal = false; sr.vertical = true;
 
-            ScrollRect srNews = scrollObj.AddComponent<ScrollRect>();
-            srNews.content = ncRect; srNews.vertical = true; srNews.horizontal = false;
+            SerializedObject soNews = new SerializedObject(newsCtrl);
+            soNews.FindProperty("_userData").objectReferenceValue = EnsureAsset<Models.UserDataSO>("Assets/Data/User Data.asset");
+            soNews.FindProperty("_container").objectReferenceValue = content.transform;
+            soNews.ApplyModifiedProperties();
 
+            // Chat View
             GameObject chatView = new GameObject("ChatView", typeof(RectTransform));
             chatView.transform.SetParent(contentArea.transform, false);
+            chatView.AddComponent<Image>().color = new Color(0.04f, 0.12f, 0.04f, 0.8f);
             RectTransform cvRect = chatView.GetComponent<RectTransform>();
             cvRect.anchorMin = Vector2.zero; cvRect.anchorMax = Vector2.one;
+            cvRect.offsetMin = Vector2.zero; cvRect.offsetMax = Vector2.zero;
+
+            // Bind views back to CommunicationPanelController
+            soComm.FindProperty("newsView").objectReferenceValue = newsView;
+            soComm.FindProperty("chatView").objectReferenceValue = chatView;
+            soComm.ApplyModifiedProperties();
 
             GameObject chatScrollObj = new GameObject("ChatScroll", typeof(RectTransform));
             chatScrollObj.transform.SetParent(chatView.transform, false);
             RectTransform csRect = chatScrollObj.GetComponent<RectTransform>();
             csRect.anchorMin = Vector2.zero; csRect.anchorMax = Vector2.one;
-            csRect.offsetMin = new Vector2(0, 35);
+            csRect.offsetMin = new Vector2(10, 46); csRect.offsetMax = new Vector2(-10, -8);
+            ScrollRect csScroll = chatScrollObj.AddComponent<ScrollRect>();
+            csScroll.horizontal = false; csScroll.vertical = true;
             chatScrollObj.AddComponent<Mask>();
-            chatScrollObj.AddComponent<Image>().color = new Color(0, 0, 0, 0.2f);
+            chatScrollObj.AddComponent<Image>().color = new Color(0,0,0,0.01f);
 
             GameObject chatContent = new GameObject("Content", typeof(RectTransform));
             chatContent.transform.SetParent(chatScrollObj.transform, false);
-            Text chatDisplayText = chatContent.AddComponent<Text>();
-            chatDisplayText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            chatDisplayText.fontSize = 12; chatDisplayText.color = Color.white;
-            chatDisplayText.alignment = TextAnchor.LowerLeft;
-            chatDisplayText.horizontalOverflow = HorizontalWrapMode.Wrap;
-            chatDisplayText.verticalOverflow = VerticalWrapMode.Overflow;
-            RectTransform ccRect = chatContent.GetComponent<RectTransform>();
-            ccRect.anchorMin = new Vector2(0, 0); ccRect.anchorMax = new Vector2(1, 0);
-            ccRect.pivot = new Vector2(0.5f, 0); ccRect.sizeDelta = new Vector2(0, 300);
+            RectTransform chcRect = chatContent.GetComponent<RectTransform>();
+            chcRect.anchorMin = new Vector2(0, 1); chcRect.anchorMax = new Vector2(1, 1);
+            chcRect.pivot = new Vector2(0.5f, 1); chcRect.sizeDelta = new Vector2(0, 0);
+            VerticalLayoutGroup vlgChat = chatContent.AddComponent<VerticalLayoutGroup>();
+            vlgChat.childControlHeight = true; vlgChat.childForceExpandHeight = false;
+            vlgChat.childControlWidth = true; vlgChat.childForceExpandWidth = true;
+            vlgChat.spacing = 0;
+            vlgChat.padding = new RectOffset(10, 5, 0, 0);
+            chatContent.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            csScroll.content = chcRect;
 
-            ScrollRect srChat = chatScrollObj.AddComponent<ScrollRect>();
-            srChat.content = ccRect; srChat.vertical = true; srChat.horizontal = false;
+            GameObject bottomShelf = new GameObject("BottomShelf", typeof(RectTransform));
+            bottomShelf.transform.SetParent(chatView.transform, false);
+            RectTransform bsRect = bottomShelf.GetComponent<RectTransform>();
+            bsRect.anchorMin = new Vector2(0, 0); bsRect.anchorMax = new Vector2(1, 0);
+            bsRect.anchoredPosition = new Vector2(0, 18); bsRect.sizeDelta = new Vector2(-4, 34);
+            bottomShelf.AddComponent<Image>().sprite = EnsureIsSprite("shortBackgroundHeaderClass.png");
 
-            GameObject inputObj = new GameObject("InputField", typeof(RectTransform));
-            inputObj.transform.SetParent(chatView.transform, false);
-            RectTransform iRect = inputObj.GetComponent<RectTransform>();
-            iRect.anchorMin = new Vector2(0, 0); iRect.anchorMax = new Vector2(1, 0);
-            iRect.anchoredPosition = new Vector2(-25, 15); iRect.sizeDelta = new Vector2(-60, 24);
-            
-            InputField input = inputObj.AddComponent<InputField>();
-            inputObj.AddComponent<Image>().color = new Color(0, 0, 0, 0.5f);
-            GameObject tObj = new GameObject("Text", typeof(RectTransform));
-            tObj.transform.SetParent(inputObj.transform, false);
-            Text t = tObj.AddComponent<Text>();
-            t.font = chatDisplayText.font; t.color = Color.white; t.fontSize = 12; t.alignment = TextAnchor.MiddleLeft;
-            t.GetComponent<RectTransform>().anchorMin = Vector2.zero; t.GetComponent<RectTransform>().anchorMax = Vector2.one;
-            t.GetComponent<RectTransform>().offsetMin = new Vector2(5, 0);
-            input.textComponent = t;
+            GameObject sayBtnObj = CreateLegacyButton(bottomShelf, "SayButton", "Сказать", 80);
+            sayBtnObj.GetComponent<RectTransform>().anchoredPosition = new Vector2(-45, 0);
+            sayBtnObj.GetComponent<RectTransform>().anchorMin = sayBtnObj.GetComponent<RectTransform>().anchorMax = new Vector2(1, 0.5f);
+            Button sayBtn = sayBtnObj.GetComponent<Button>();
 
-            GameObject sendBtn = new GameObject("Send", typeof(RectTransform));
-            sendBtn.transform.SetParent(chatView.transform, false);
-            RectTransform sbRect = sendBtn.GetComponent<RectTransform>();
-            sbRect.anchorMin = new Vector2(1, 0); sbRect.anchorMax = new Vector2(1, 0);
-            sbRect.anchoredPosition = new Vector2(-15, 15); sbRect.sizeDelta = new Vector2(30, 24);
-            Button btn = sendBtn.AddComponent<Button>();
-            sendBtn.AddComponent<Image>().color = new Color(0.3f, 0.3f, 0.3f, 1f);
+            GameObject inputFieldObj = CreateLegacyInput(bottomShelf, "ChatInputField", new Vector2(-45, 0), width: -145);
+            InputField inputField = inputFieldObj.GetComponent<InputField>();
 
-            chatView.SetActive(false);
-            newsView.SetActive(true);
+            ChatController chatCtrl = chatView.AddComponent<ChatController>();
+            SerializedObject soChat = new SerializedObject(chatCtrl);
+            soChat.FindProperty("_scrollRect").objectReferenceValue = csScroll;
+            soChat.FindProperty("_chatInputField").objectReferenceValue = inputField;
+            soChat.FindProperty("_sendButton").objectReferenceValue = sayBtn;
+            soChat.FindProperty("_rankSettings").objectReferenceValue = EnsureAsset<RankSettingsSO>("Assets/Data/RankSettings.asset");
+            soChat.FindProperty("_messagePrefab").objectReferenceValue = CreateChatMessagePrefab();
+            soChat.FindProperty("_messagesContainer").objectReferenceValue = chatContent.transform;
+            soChat.ApplyModifiedProperties();
 
-            ChatController chatCtrl = panel.AddComponent<ChatController>();
-            typeof(ChatController).GetField("_scrollRect", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(chatCtrl, srChat);
-            typeof(ChatController).GetField("_chatDisplayText", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(chatCtrl, chatDisplayText);
-            typeof(ChatController).GetField("_chatInputField", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(chatCtrl, input);
-            typeof(ChatController).GetField("_sendButton", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(chatCtrl, btn);
-
-            NewsController newsCtrl = panel.AddComponent<NewsController>();
-            SerializedObject soNews = new SerializedObject(newsCtrl);
-            soNews.FindProperty("_container").objectReferenceValue = newsContent.transform;
-            soNews.FindProperty("_frameSprite").objectReferenceValue = EnsureIsSprite("GreenFrameSkin_frame.png");
-            soNews.FindProperty("_cornerSprite").objectReferenceValue = EnsureIsSprite("GreenFrameSkin_corner_frame.png");
-            soNews.ApplyModifiedProperties();
-
-            newsTab.GetComponent<Button>().onClick.AddListener(() => {
-                newsView.SetActive(true);
-                chatView.SetActive(false);
-            });
-            chatTab.GetComponent<Button>().onClick.AddListener(() => {
-                newsView.SetActive(false);
-                chatView.SetActive(true);
-            });
+            SerializedObject soCommLate = new SerializedObject(commCtrl);
+            soCommLate.FindProperty("newsView").objectReferenceValue = newsView;
+            soCommLate.FindProperty("chatView").objectReferenceValue = chatView;
+            soCommLate.ApplyModifiedProperties();
 
             return chatCtrl;
         }
 
-        private static GameObject CreateCommunicationTab(GameObject parent, string name, string label, string iconAsset, bool isActive)
+        private static GameObject CreateLegacyButton(GameObject parent, string name, string label, float width)
         {
             GameObject btnObj = new GameObject(name);
             btnObj.transform.SetParent(parent.transform, false);
             RectTransform rect = btnObj.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0, 1); rect.anchorMax = new Vector2(0, 1);
-            rect.pivot = new Vector2(0, 1);
-            rect.sizeDelta = new Vector2(102, 30); // Ширина 102, согласно LobbyChat.as
+            rect.sizeDelta = new Vector2(width, 30);
             
-            Button btn = btnObj.AddComponent<Button>();
-            
-            GameObject bg = new GameObject("Background");
+            GameObject bg = new GameObject("BG");
             bg.transform.SetParent(btnObj.transform, false);
             RectTransform bgRect = bg.AddComponent<RectTransform>();
             bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
             bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
 
-            string leftAsset, centerAsset, rightAsset;
-            if (isActive) {
-                // Активная вкладка ЗЕЛЕНАЯ (состояние закрытой кнопки GreenMediumButtonSkin)
-                leftAsset = "802_controls.buttons.h30px.GreenMediumButtonSkin_leftDownClass.png";
-                centerAsset = "1178_controls.buttons.h30px.GreenMediumButtonSkin_middleDownClass.png";
-                rightAsset = "951_controls.buttons.h30px.GreenMediumButtonSkin_rightDownClass.png";
-            } else {
-                // Неактивная вкладка серая (активное состояние кнопки button_def).
-                leftAsset = "27_assets.button.button_def_UP_LEFT.png";
-                centerAsset = "21_assets.button.button_def_UP_CENTER.png";
-                rightAsset = "14_assets.button.button_def_UP_RIGHT.png";
-            }
-
-            // Усовершенствованная трехкомпонентная система крепления для предотвращения зазоров.
-            CreatePart(bg, "Left", leftAsset, new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
-            CreatePart(bg, "Right", rightAsset, new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
-            CreatePart(bg, "Center", centerAsset, new Vector2(0, 0), new Vector2(1, 1), Vector2.zero, Vector2.zero, Image.Type.Sliced);
-            
-            // Adjust Center offsets to fit between left/right parts
-            RectTransform centerRect = bg.transform.Find("Center").GetComponent<RectTransform>();
-            centerRect.anchorMin = Vector2.zero; centerRect.anchorMax = Vector2.one;
-            centerRect.offsetMin = new Vector2(8, 0); centerRect.offsetMax = new Vector2(-8, 0);
-
-            // Add Icon
-            GameObject icoObj = new GameObject("Icon");
-            icoObj.transform.SetParent(btnObj.transform, false);
-            RectTransform icoRect = icoObj.AddComponent<RectTransform>();
-            icoRect.anchorMin = new Vector2(0, 0.5f); icoRect.anchorMax = new Vector2(0, 0.5f);
-            icoRect.anchoredPosition = new Vector2(12, 0); 
-            Image icoImg = icoObj.AddComponent<Image>();
-            Sprite sIcon = EnsureIsSprite(iconAsset);
-            if (sIcon != null) {
-                icoImg.sprite = sIcon;
-                icoImg.SetNativeSize();
-            } else {
-                icoImg.color = new Color(1, 1, 1, 0.2f);
-                icoRect.sizeDelta = new Vector2(16, 16);
-            }
+            // GreenMediumButtonSkin style
+            CreatePart(bg, "Left", "leftUpClass_803.png", new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
+            CreatePart(bg, "Right", "rightUpClass_879.png", new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
+            CreatePart(bg, "Center", "middleUpClass.png", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(width - 16, 30), Image.Type.Tiled);
 
             GameObject tObj = new GameObject("Text");
             tObj.transform.SetParent(btnObj.transform, false);
             Text t = tObj.AddComponent<Text>();
-            t.font = Resources.Load<Font>("LegacyRuntime") ?? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            if (t.font == null) t.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            t.text = label; t.fontSize = 12; t.alignment = TextAnchor.MiddleCenter; t.color = Color.white;
+            t.GetComponent<RectTransform>().anchorMin = Vector2.zero; t.GetComponent<RectTransform>().anchorMax = Vector2.one;
             
-            t.text = label.ToUpper(); // Flash often uses upper case for these tabs
-            t.fontSize = 11; t.alignment = TextAnchor.MiddleLeft; 
-            t.color = isActive ? Color.white : new Color(0.85f, 0.85f, 0.85f);
-            t.fontStyle = isActive ? FontStyle.Bold : FontStyle.Normal;
+            Image targetImg = btnObj.AddComponent<Image>();
+            targetImg.color = new Color(0, 0, 0, 0); 
+            targetImg.raycastTarget = true;
+            btnObj.AddComponent<Button>();
+
+            return btnObj;
+        }
+
+        private static GameObject CreateLegacyInput(GameObject parent, string name, Vector2 pos, float width)
+        {
+            GameObject obj = new GameObject(name);
+            obj.transform.SetParent(parent.transform, false);
+            RectTransform rect = obj.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0, 0.5f); rect.anchorMax = new Vector2(1, 0.5f);
+            rect.anchoredPosition = pos; 
+            rect.offsetMin = new Vector2(10, -13); 
+            rect.offsetMax = new Vector2(width, 13);
+
+            GameObject bg = new GameObject("BG");
+            bg.transform.SetParent(obj.transform, false);
+            RectTransform bgRect = bg.AddComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
+            bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
+
+            CreatePart(bg, "L", "InputLeft.png", new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(10, 26), Image.Type.Simple);
+            CreatePart(bg, "R", "InputRight.png", new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(10, 26), Image.Type.Simple);
+            CreatePart(bg, "M", "InputCenter.png", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(-20, 26), Image.Type.Tiled);
+
+            RectTransform mRect = bg.transform.Find("M").GetComponent<RectTransform>();
+            mRect.anchorMin = Vector2.zero; mRect.anchorMax = Vector2.one;
+            mRect.offsetMin = new Vector2(10, 0); mRect.offsetMax = new Vector2(-10, 0);
+
+            Image targetImg = obj.AddComponent<Image>();
+            targetImg.color = new Color(0, 0, 0, 0);
             
-            RectTransform tRect = tObj.GetComponent<RectTransform>();
-            tRect.anchorMin = new Vector2(0, 0); tRect.anchorMax = new Vector2(1, 1);
+            InputField inputField = obj.AddComponent<InputField>();
+            inputField.targetGraphic = targetImg;
+            inputField.transition = Selectable.Transition.None;
+
+            GameObject tObj = new GameObject("Text");
+            tObj.transform.SetParent(obj.transform, false);
+            Text t = tObj.AddComponent<Text>();
+            t.font = GetLegacyFont();
+            t.fontSize = 12; t.color = Color.white; t.alignment = TextAnchor.MiddleLeft;
+            t.raycastTarget = false;
+            
+            RectTransform tRect = t.GetComponent<RectTransform>();
+            tRect.anchorMin = Vector2.zero; tRect.anchorMax = Vector2.one;
+            tRect.offsetMin = new Vector2(8, 0); tRect.offsetMax = new Vector2(-8, 0);
+            
+            inputField.textComponent = t;
+            return obj;
+        }
+
+        private static GameObject CreateCommTab(GameObject parent, string name, string label, string iconAsset, bool isActive)
+        {
+            GameObject btnObj = new GameObject(name);
+            btnObj.transform.SetParent(parent.transform, false);
+            RectTransform rect = btnObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(102, 30);
+            
+            Image targetImg = btnObj.AddComponent<Image>();
+            targetImg.color = new Color(0, 0, 0, 0); 
+            targetImg.raycastTarget = true;
+            Button btn = btnObj.AddComponent<Button>();
+
+            GameObject bg = new GameObject("BG");
+            bg.transform.SetParent(btnObj.transform, false);
+            RectTransform bgRect = bg.AddComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
+            bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
+
+            string leftAsset = isActive ? "leftDownClass_802.png" : "LEFT_497.png";
+            string centerAsset = isActive ? "middleDownClass.png" : "CENTER_499.png";
+            string rightAsset = isActive ? "rightDownClass_951.png" : "RIGHT_498.png";
+
+            CreatePart(bg, "Left", leftAsset, new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
+            CreatePart(bg, "Right", rightAsset, new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(8, 30), Image.Type.Simple);
+            CreatePart(bg, "Center", centerAsset, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(86, 30), Image.Type.Tiled);
+
+            GameObject icoObj = new GameObject("Icon");
+            icoObj.transform.SetParent(btnObj.transform, false);
+            RectTransform icoRect = icoObj.AddComponent<RectTransform>();
+            icoRect.anchorMin = new Vector2(0, 0.5f); icoRect.anchorMax = new Vector2(0, 0.5f);
+            icoRect.anchoredPosition = new Vector2(12, 0); icoRect.sizeDelta = new Vector2(16, 16);
+            Image icoImg = icoObj.AddComponent<Image>();
+            icoImg.sprite = EnsureIsSprite(iconAsset);
+            icoImg.preserveAspect = true;
+
+            GameObject tObj = new GameObject("Text");
+            tObj.transform.SetParent(btnObj.transform, false);
+            Text t = tObj.AddComponent<Text>();
+            t.font = GetLegacyFont();
+            t.text = label; t.fontSize = 11; t.alignment = TextAnchor.MiddleLeft; t.color = Color.white;
+            RectTransform tRect = t.GetComponent<RectTransform>();
+            tRect.anchorMin = Vector2.zero; tRect.anchorMax = Vector2.one;
             tRect.offsetMin = new Vector2(30, 0); tRect.offsetMax = new Vector2(-5, 0);
-            
-            t.transform.SetAsLastSibling();
+
             return btnObj;
         }
 
@@ -653,12 +833,12 @@ namespace Tanki.Editor
             findBtnObj.transform.SetParent(panel.transform, false);
             RectTransform fbRect = findBtnObj.AddComponent<RectTransform>();
             fbRect.anchorMin = new Vector2(0.5f, 1); fbRect.anchorMax = new Vector2(0.5f, 1);
-            fbRect.anchoredPosition = new Vector2(0, -12); fbRect.sizeDelta = new Vector2(200, 24);
+            fbRect.anchoredPosition = new Vector2(0, -18); fbRect.sizeDelta = new Vector2(200, 24);
             Button findBtn = findBtnObj.AddComponent<Button>();
             Image findImg = findBtnObj.AddComponent<Image>();
-            findImg.sprite = EnsureIsSprite("ButtonGo.png");
+            findImg.sprite = EnsureIsSprite("normalStateClass.png");
             if (findImg.sprite == null) findImg.color = new Color(0.2f, 0.6f, 0.2f);
-            findImg.type = Image.Type.Sliced;
+            findImg.type = Image.Type.Simple;
 
             GameObject ftObj = new GameObject("Text");
             ftObj.transform.SetParent(findBtnObj.transform, false);
@@ -684,6 +864,7 @@ namespace Tanki.Editor
             VerticalLayoutGroup vlg = content.AddComponent<VerticalLayoutGroup>();
             vlg.childControlHeight = false; vlg.childForceExpandHeight = false;
             vlg.spacing = 2;
+            vlg.padding = new RectOffset(10, 10, 0, 0);
             content.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             cRect.anchorMin = new Vector2(0, 1); cRect.anchorMax = new Vector2(1, 1);
             cRect.pivot = new Vector2(0.5f, 1);
@@ -694,25 +875,62 @@ namespace Tanki.Editor
             typeof(BattleListController).GetField("_container", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(ctrl, content.transform);
         }
 
-        private static void CreateMenuButton(GameObject parent, string name, Vector2 pos, string label)
+        private static void CreateTopMenuButton(GameObject parent, string name, string label, string iconAsset, string color)
         {
             GameObject btnObj = new GameObject(name + "Button");
             btnObj.transform.SetParent(parent.transform, false);
             RectTransform rect = btnObj.AddComponent<RectTransform>();
-            rect.anchoredPosition = pos; rect.sizeDelta = new Vector2(100, 30);
+            rect.sizeDelta = new Vector2(95, 24);
             
             Button btn = btnObj.AddComponent<Button>();
-            Image img = btnObj.AddComponent<Image>();
-            img.sprite = EnsureIsSprite("ButtonDefault.png");
-            img.type = Image.Type.Sliced;
+            
+            GameObject bg = new GameObject("BG");
+            bg.transform.SetParent(btnObj.transform, false);
+            RectTransform bgRect = bg.AddComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
+            bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
+
+            string leftAsset, centerAsset, rightAsset;
+            if (color == "green") {
+                leftAsset = "leftUpClass_803.png";
+                centerAsset = "middleUpClass.png";
+                rightAsset = "rightUpClass_879.png";
+            } else if (color == "amber") {
+                leftAsset = "LEFT_497.png"; centerAsset = "CENTER_499.png"; rightAsset = "RIGHT_498.png";
+            } else if (color == "grey") {
+                leftAsset = "LEFT_497.png"; centerAsset = "CENTER_499.png"; rightAsset = "RIGHT_498.png";
+            } else {
+                leftAsset = "LEFT_497.png";
+                centerAsset = "CENTER_499.png";
+                rightAsset = "RIGHT_498.png";
+            }
+
+            CreatePart(bg, "L", leftAsset, new Vector2(0, 0.5f), new Vector2(0, 0.5f), Vector2.zero, new Vector2(8, 24), Image.Type.Simple);
+            CreatePart(bg, "R", rightAsset, new Vector2(1, 0.5f), new Vector2(1, 0.5f), Vector2.zero, new Vector2(8, 24), Image.Type.Simple);
+            CreatePart(bg, "M", centerAsset, new Vector2(0, 0), new Vector2(1, 1), Vector2.zero, Vector2.zero, Image.Type.Sliced);
+            
+            RectTransform mRect = bg.transform.Find("M").GetComponent<RectTransform>();
+            mRect.anchorMin = Vector2.zero; mRect.anchorMax = Vector2.one;
+            mRect.offsetMin = new Vector2(8, 0); mRect.offsetMax = new Vector2(-8, 0);
+
+            GameObject ico = new GameObject("Icon", typeof(RectTransform));
+            ico.transform.SetParent(btnObj.transform, false);
+            RectTransform irt = ico.GetComponent<RectTransform>();
+            irt.anchorMin = new Vector2(0, 0.5f); irt.anchorMax = new Vector2(0, 0.5f);
+            irt.anchoredPosition = new Vector2(12, 0); irt.sizeDelta = new Vector2(16, 16);
+            Image iImg = ico.AddComponent<Image>();
+            iImg.sprite = EnsureIsSprite(iconAsset);
+            iImg.preserveAspect = true;
 
             GameObject tObj = new GameObject("Text");
             tObj.transform.SetParent(btnObj.transform, false);
             Text t = tObj.AddComponent<Text>();
-            t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            t.text = label; t.fontSize = 12; t.alignment = TextAnchor.MiddleCenter; t.color = Color.white;
-            t.GetComponent<RectTransform>().anchorMin = Vector2.zero; t.GetComponent<RectTransform>().anchorMax = Vector2.one;
-
+            t.font = GetLegacyFont();
+            t.text = label; t.fontSize = 11; t.alignment = TextAnchor.MiddleLeft; t.color = Color.white;
+            RectTransform trt = t.GetComponent<RectTransform>();
+            trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+            trt.offsetMin = new Vector2(28, 0); trt.offsetMax = new Vector2(-5, 0);
+            
             string viewName = name.ToLower();
             btn.onClick.AddListener(() => {
                 var lobbyUI = GameObject.FindObjectOfType<LobbyUIController>();
@@ -731,6 +949,7 @@ namespace Tanki.Editor
             bg.transform.SetParent(win.transform, false);
             RectTransform bgRect = bg.AddComponent<RectTransform>();
             Image bgImg = bg.AddComponent<Image>();
+            bgImg.raycastTarget = false; // Decorative window background
             Sprite bgSprite = EnsureIsSprite("WindowBGTile.png");
             if (bgSprite != null)
             {
@@ -739,73 +958,222 @@ namespace Tanki.Editor
             }
             else bgImg.color = new Color(0.12f, 0.12f, 0.12f, 0.95f);
             bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
-            bgRect.offsetMin = new Vector2(7, 7); bgRect.offsetMax = new Vector2(-7, -7);
+            bgRect.offsetMin = new Vector2(5, 5); bgRect.offsetMax = new Vector2(-5, -5);
 
-            float f = 11;
-            CreatePart(win, "Top", "WindowTop.png", new Vector2(0.5f, 1), new Vector2(0.5f, 0.5f), new Vector2(0, -f/2), new Vector2(w > 0 ? w - 22 : 0, f), Image.Type.Tiled);
-            CreatePart(win, "Bottom", "WindowBottom.png", new Vector2(0.5f, 0), new Vector2(0.5f, 0.5f), new Vector2(0, f/2), new Vector2(w > 0 ? w - 22 : 0, f), Image.Type.Tiled);
-            CreatePart(win, "Left", "WindowLeft.png", new Vector2(0, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(f/2, 0), new Vector2(f, h > 0 ? h - 22 : 0), Image.Type.Tiled);
-            CreatePart(win, "Right", "WindowRight.png", new Vector2(1, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-f/2, 0), new Vector2(f, h > 0 ? h - 22 : 0), Image.Type.Tiled);
+            float f = 5;
+            CreatePart(win, "Top", "window/WindowTop.png", new Vector2(0.5f, 1), new Vector2(0.5f, 1), new Vector2(0, 0), new Vector2(w > 0 ? w - 10 : 0, f), Image.Type.Simple);
+            CreatePart(win, "Bottom", "window/WindowBottom.png", new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0, 0), new Vector2(w > 0 ? w - 10 : 0, f), Image.Type.Simple);
+            CreatePart(win, "Left", "window/WindowLeft.png", new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0), new Vector2(f, h > 0 ? h - 10 : 0), Image.Type.Simple);
+            CreatePart(win, "Right", "window/WindowRight.png", new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(0, 0), new Vector2(f, h > 0 ? h - 10 : 0), Image.Type.Simple);
 
             if (w == 0 || h == 0)
             {
                 win.transform.Find("Top").GetComponent<RectTransform>().anchorMin = new Vector2(0, 1);
                 win.transform.Find("Top").GetComponent<RectTransform>().anchorMax = new Vector2(1, 1);
-                win.transform.Find("Top").GetComponent<RectTransform>().offsetMin = new Vector2(11, -11);
-                win.transform.Find("Top").GetComponent<RectTransform>().offsetMax = new Vector2(-11, 0);
+                win.transform.Find("Top").GetComponent<RectTransform>().offsetMin = new Vector2(5, -5);
+                win.transform.Find("Top").GetComponent<RectTransform>().offsetMax = new Vector2(-5, 0);
 
                 win.transform.Find("Bottom").GetComponent<RectTransform>().anchorMin = new Vector2(0, 0);
                 win.transform.Find("Bottom").GetComponent<RectTransform>().anchorMax = new Vector2(1, 0);
-                win.transform.Find("Bottom").GetComponent<RectTransform>().offsetMin = new Vector2(11, 0);
-                win.transform.Find("Bottom").GetComponent<RectTransform>().offsetMax = new Vector2(-11, 11);
+                win.transform.Find("Bottom").GetComponent<RectTransform>().offsetMin = new Vector2(5, 0);
+                win.transform.Find("Bottom").GetComponent<RectTransform>().offsetMax = new Vector2(-5, 5);
 
                 win.transform.Find("Left").GetComponent<RectTransform>().anchorMin = new Vector2(0, 0);
                 win.transform.Find("Left").GetComponent<RectTransform>().anchorMax = new Vector2(0, 1);
-                win.transform.Find("Left").GetComponent<RectTransform>().offsetMin = new Vector2(0, 11);
-                win.transform.Find("Left").GetComponent<RectTransform>().offsetMax = new Vector2(11, -11);
+                win.transform.Find("Left").GetComponent<RectTransform>().offsetMin = new Vector2(0, 5);
+                win.transform.Find("Left").GetComponent<RectTransform>().offsetMax = new Vector2(5, -5);
 
                 win.transform.Find("Right").GetComponent<RectTransform>().anchorMin = new Vector2(1, 0);
                 win.transform.Find("Right").GetComponent<RectTransform>().anchorMax = new Vector2(1, 1);
-                win.transform.Find("Right").GetComponent<RectTransform>().offsetMin = new Vector2(-11, 11);
-                win.transform.Find("Right").GetComponent<RectTransform>().offsetMax = new Vector2(0, -11);
             }
 
-            CreatePart(win, "TL", "WindowTopLeftCorner.png", new Vector2(0, 1), new Vector2(0.5f, 0.5f), new Vector2(f/2, -f/2), new Vector2(f, f), Image.Type.Simple, 0);
-            CreatePart(win, "TR", "WindowTopRightCorner.png", new Vector2(1, 1), new Vector2(0.5f, 0.5f), new Vector2(-f/2, -f/2), new Vector2(f, f), Image.Type.Simple, 0);
-            CreatePart(win, "BR", "WindowBottomRightCorner.png", new Vector2(1, 0), new Vector2(0.5f, 0.5f), new Vector2(-f/2, f/2), new Vector2(f, f), Image.Type.Simple, 0);
-            CreatePart(win, "BL", "WindowBottomLeftCorner.png", new Vector2(0, 0), new Vector2(0.5f, 0.5f), new Vector2(f/2, f/2), new Vector2(f, f), Image.Type.Simple, 0);
+            CreatePart(win, "TL", "window/LeftUPСorner.png", new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 0), new Vector2(f, f), Image.Type.Simple, 0);
+            CreatePart(win, "TR", "window/RightUPСorner.png", new Vector2(1, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(f, f), Image.Type.Simple, 0);
+            CreatePart(win, "BR", "window/RightDownСorner.png", new Vector2(1, 0), new Vector2(1, 0), new Vector2(0, 0), new Vector2(f, f), Image.Type.Simple, 0);
+            CreatePart(win, "BL", "window/LeftDownСorner.png", new Vector2(0, 0), new Vector2(0, 0), new Vector2(0, 0), new Vector2(f, f), Image.Type.Simple, 0);
 
             return win;
         }
 
-        private static void AddHeaderText(GameObject win, string text, string iconAsset)
+        private static void CreateSmallIconButton(GameObject parent, string name, string iconAsset)
         {
-            GameObject hBg = new GameObject("HeaderBG");
+            GameObject btn = new GameObject(name, typeof(RectTransform));
+            btn.transform.SetParent(parent.transform, false);
+            btn.GetComponent<RectTransform>().sizeDelta = new Vector2(24, 24);
+            
+            // 3-part background (using same as tabs but small)
+            GameObject bg = new GameObject("BG");
+            bg.transform.SetParent(btn.transform, false);
+            RectTransform bgRt = bg.AddComponent<RectTransform>();
+            bgRt.anchorMin = Vector2.zero; bgRt.anchorMax = Vector2.one;
+            bgRt.offsetMin = Vector2.zero; bgRt.offsetMax = Vector2.zero;
+
+            // Simplified: single image for small buttons if parts are too complex
+            Image img = bg.AddComponent<Image>();
+            img.sprite = EnsureIsSprite("LEFT_497.png"); // Using tab left part as button base
+            img.type = Image.Type.Sliced;
+            
+            GameObject iconObj = new GameObject("Icon");
+            iconObj.transform.SetParent(btn.transform, false);
+            Image iconImg = iconObj.AddComponent<Image>();
+            iconImg.sprite = EnsureIsSprite(iconAsset);
+            iconImg.preserveAspect = true;
+            iconImg.raycastTarget = false;
+            iconObj.GetComponent<RectTransform>().sizeDelta = new Vector2(16, 16);
+
+            btn.AddComponent<Button>();
+        }
+
+        private static Text AddHeaderText(GameObject win, string text, string iconAsset)
+        {
+            GameObject hBg = new GameObject("HeaderBG", typeof(RectTransform));
             hBg.transform.SetParent(win.transform, false);
-            Image hImg = hBg.AddComponent<Image>();
-            Sprite sBg = EnsureIsSprite("HeaderBackground.png");
+            Image hImg = hBg.GetComponent<Image>() ?? hBg.AddComponent<Image>();
+            hImg.raycastTarget = false; 
+            Sprite sBg = EnsureIsSprite("shortBackgroundHeaderClass.png");
             if (sBg != null) {
                 hImg.sprite = sBg;
-                hImg.type = Image.Type.Sliced;
+                hImg.type = Image.Type.Simple;
             } else {
                 hImg.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+                hBg.GetComponent<RectTransform>().sizeDelta = new Vector2(180, 26);
             }
             RectTransform hRect = hBg.GetComponent<RectTransform>();
             hRect.anchorMin = new Vector2(0.5f, 1); hRect.anchorMax = new Vector2(0.5f, 1);
-            hRect.anchoredPosition = new Vector2(0, -2); 
+            hRect.pivot = new Vector2(0.5f, 0.5f);
+            hRect.anchoredPosition = new Vector2(0, 0);
             hRect.sizeDelta = new Vector2(180, 26);
-
-            GameObject iconObj = new GameObject("Icon");
+            
+            GameObject iconObj = new GameObject("Icon", typeof(RectTransform));
             iconObj.transform.SetParent(hBg.transform, false);
-            Image icon = iconObj.AddComponent<Image>();
+            Image icon = iconObj.GetComponent<Image>() ?? iconObj.AddComponent<Image>();
+            icon.raycastTarget = false; 
             Sprite sIcon = EnsureIsSprite(iconAsset);
             if (sIcon != null) {
                 icon.sprite = sIcon;
                 icon.SetNativeSize();
             } else {
-                icon.color = new Color(1, 1, 1, 0.2f);
+                icon.color = new Color(0, 0, 0, 0);
+                icon.GetComponent<RectTransform>().sizeDelta = new Vector2(16, 16);
             }
             icon.GetComponent<RectTransform>().anchoredPosition = Vector2.zero;
+
+            GameObject tObj = new GameObject("Text");
+            tObj.transform.SetParent(hBg.transform, false);
+            Text t = tObj.AddComponent<Text>();
+            t.raycastTarget = false; 
+            t.font = GetLegacyFont();
+            t.text = text; t.fontSize = 12; t.alignment = TextAnchor.MiddleCenter; t.color = Color.white;
+            t.GetComponent<RectTransform>().anchorMin = Vector2.zero; t.GetComponent<RectTransform>().anchorMax = Vector2.one;
+            
+            Shadow s = tObj.AddComponent<Shadow>();
+            s.effectColor = new Color(0, 0, 0, 0.5f);
+            s.effectDistance = new Vector2(1, -1);
+
+            return t;
+        }
+        private static void AddImageHeader(GameObject win, string headerAsset)
+        {
+            GameObject hBg = new GameObject("HeaderBG", typeof(RectTransform));
+            hBg.transform.SetParent(win.transform, false);
+            Image hImg = hBg.GetComponent<Image>() ?? hBg.AddComponent<Image>();
+            hImg.raycastTarget = false; 
+            Sprite sBg = EnsureIsSprite("shortBackgroundHeaderClass.png");
+            if (sBg != null) {
+                hImg.sprite = sBg;
+                hImg.type = Image.Type.Simple;
+            } else {
+                hImg.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+                hBg.GetComponent<RectTransform>().sizeDelta = new Vector2(180, 26);
+            }
+            RectTransform hRect = hBg.GetComponent<RectTransform>();
+            hRect.anchorMin = new Vector2(0.5f, 1); hRect.anchorMax = new Vector2(0.5f, 1);
+            hRect.pivot = new Vector2(0.5f, 0.5f);
+            hRect.anchoredPosition = new Vector2(0, 0);
+            hRect.sizeDelta = new Vector2(180, 26);
+            
+            GameObject iconObj = new GameObject("Icon", typeof(RectTransform));
+            iconObj.transform.SetParent(hBg.transform, false);
+            Image icon = iconObj.GetComponent<Image>() ?? iconObj.AddComponent<Image>();
+            icon.raycastTarget = false; 
+            Sprite sIcon = EnsureIsSprite(headerAsset);
+            if (sIcon != null) {
+                icon.sprite = sIcon;
+                icon.SetNativeSize();
+            }
+            icon.GetComponent<RectTransform>().anchoredPosition = Vector2.zero;
+        }
+
+        private static GameObject CreateChatMessagePrefab()
+        {
+            string path = "Assets/Prefabs/UI/ChatMessageItem.prefab";
+            string dir = Path.GetDirectoryName(path);
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            
+            GameObject go = new GameObject("ChatMessageItem", typeof(RectTransform));
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.sizeDelta = new Vector2(250, 20);
+            
+            HorizontalLayoutGroup hlg = go.AddComponent<HorizontalLayoutGroup>();
+            hlg.childControlWidth = true; hlg.childControlHeight = true; 
+            hlg.childForceExpandWidth = false; hlg.childForceExpandHeight = false;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.spacing = 4;
+            hlg.padding = new RectOffset(2, 2, 0, 0);
+
+            // Added LayoutElement to tell VerticalLayoutGroup our preferred size
+            LayoutElement mainLE = go.AddComponent<LayoutElement>();
+            mainLE.minHeight = 16;
+
+            GameObject rankObj = new GameObject("RankIcon", typeof(RectTransform));
+            rankObj.transform.SetParent(go.transform, false);
+            LayoutElement rankLE = rankObj.AddComponent<LayoutElement>();
+            rankLE.minWidth = 16; rankLE.minHeight = 14;
+            rankLE.preferredWidth = 16; rankLE.preferredHeight = 14;
+            Image rankImg = rankObj.AddComponent<Image>();
+            rankImg.preserveAspect = true;
+
+            GameObject senderObj = new GameObject("Sender", typeof(RectTransform));
+            senderObj.transform.SetParent(go.transform, false);
+            Text senderText = senderObj.AddComponent<Text>();
+            Font legacyFont = Resources.Load<Font>("LegacyRuntime") ?? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            senderText.font = legacyFont != null ? legacyFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            senderText.fontSize = 12; senderText.fontStyle = FontStyle.Bold;
+            senderText.color = Color.green; senderText.alignment = TextAnchor.MiddleLeft;
+            senderObj.AddComponent<LayoutElement>().flexibleWidth = 0;
+            senderObj.AddComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            // Classic shadow effect
+            Shadow sShadow = senderObj.AddComponent<Shadow>();
+            sShadow.effectColor = new Color(0, 0, 0, 0.7f);
+            sShadow.effectDistance = new Vector2(1, -1);
+
+            GameObject msgObj = new GameObject("Message", typeof(RectTransform));
+            msgObj.transform.SetParent(go.transform, false);
+            Text msgText = msgObj.AddComponent<Text>();
+            msgText.font = senderText.font;
+            msgText.fontSize = 12; msgText.color = Color.white;
+            msgText.alignment = TextAnchor.MiddleLeft;
+            msgText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            msgText.verticalOverflow = VerticalWrapMode.Overflow;
+            msgObj.AddComponent<LayoutElement>().flexibleWidth = 1;
+            
+            // Text needs to drive the height
+            msgObj.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            // Classic shadow effect
+            Shadow mShadow = msgObj.AddComponent<Shadow>();
+            mShadow.effectColor = new Color(0, 0, 0, 0.7f);
+            mShadow.effectDistance = new Vector2(1, -1);
+
+            ChatMessageItem item = go.AddComponent<ChatMessageItem>();
+            SerializedObject so = new SerializedObject(item);
+            so.FindProperty("_rankIcon").objectReferenceValue = rankImg;
+            so.FindProperty("_senderText").objectReferenceValue = senderText;
+            so.FindProperty("_messageText").objectReferenceValue = msgText;
+            so.ApplyModifiedProperties();
+
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, path);
+            DestroyImmediate(go);
+            return prefab;
         }
 
         private static GameObject CreatePart(GameObject parent, string name, string asset, Vector2 anchor, Vector2 pivot, Vector2 pos, Vector2 size, Image.Type type, float rotation = 0)
@@ -824,9 +1192,11 @@ namespace Tanki.Editor
             {
                 img.sprite = s;
                 img.type = type;
+                img.raycastTarget = false; // Decorative by default
             }
             else
             {
+                img.raycastTarget = false; // Decorative by default
                 // Refined fallback look: Rounded glossy button simulation
                 if (asset.Contains("ACTIVE") || name.Contains("Active"))
                     img.color = new Color(0.2f, 0.2f, 0.2f, 0.8f); // Neutral dark grey instead of green
@@ -838,47 +1208,7 @@ namespace Tanki.Editor
             return obj;
         }
 
-        private static GameObject CreateGreenFrame(GameObject parent)
-        {
-            GameObject frame = new GameObject("GreenFrame");
-            frame.transform.SetParent(parent.transform, false);
-            RectTransform rect = frame.AddComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one;
-            rect.offsetMin = Vector2.zero; rect.offsetMax = Vector2.zero;
 
-            float f = 16; 
-            CreatePart(frame, "TL", "GreenFrameSkin_corner_frame.png", new Vector2(0, 1), new Vector2(0.5f, 0.5f), new Vector2(f/2, -f/2), new Vector2(f, f), Image.Type.Simple, 0);
-            CreatePart(frame, "TR", "GreenFrameSkin_corner_frame.png", new Vector2(1, 1), new Vector2(0.5f, 0.5f), new Vector2(-f/2, -f/2), new Vector2(f, f), Image.Type.Simple, -90);
-            CreatePart(frame, "BR", "GreenFrameSkin_corner_frame.png", new Vector2(1, 0), new Vector2(0.5f, 0.5f), new Vector2(-f/2, f/2), new Vector2(f, f), Image.Type.Simple, -180);
-            CreatePart(frame, "BL", "GreenFrameSkin_corner_frame.png", new Vector2(0, 0), new Vector2(0.5f, 0.5f), new Vector2(f/2, f/2), new Vector2(f, f), Image.Type.Simple, -270);
 
-            CreatePart(frame, "Top", "GreenFrameSkin_frame.png", new Vector2(0.5f, 1), new Vector2(0.5f, 0.5f), new Vector2(0, -f/2), new Vector2(-f*2, f), Image.Type.Tiled);
-            CreatePart(frame, "Bottom", "GreenFrameSkin_frame.png", new Vector2(0.5f, 0), new Vector2(0.5f, 0.5f), new Vector2(0, f/2), new Vector2(-f*2, f), Image.Type.Tiled, 180);
-            CreatePart(frame, "Left", "GreenFrameSkin_frame.png", new Vector2(0, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(f/2, 0), new Vector2(f, -f*2), Image.Type.Tiled, 90);
-            CreatePart(frame, "Right", "GreenFrameSkin_frame.png", new Vector2(1, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-f/2, 0), new Vector2(f, -f*2), Image.Type.Tiled, -90);
-
-            // Крепления для динамического изменения размера
-            frame.transform.Find("Top").GetComponent<RectTransform>().anchorMin = new Vector2(0, 1);
-            frame.transform.Find("Top").GetComponent<RectTransform>().anchorMax = new Vector2(1, 1);
-            frame.transform.Find("Top").GetComponent<RectTransform>().offsetMin = new Vector2(f, -f);
-            frame.transform.Find("Top").GetComponent<RectTransform>().offsetMax = new Vector2(-f, 0);
-
-            frame.transform.Find("Bottom").GetComponent<RectTransform>().anchorMin = new Vector2(0, 0);
-            frame.transform.Find("Bottom").GetComponent<RectTransform>().anchorMax = new Vector2(1, 0);
-            frame.transform.Find("Bottom").GetComponent<RectTransform>().offsetMin = new Vector2(f, 0);
-            frame.transform.Find("Bottom").GetComponent<RectTransform>().offsetMax = new Vector2(-f, f);
-
-            frame.transform.Find("Left").GetComponent<RectTransform>().anchorMin = new Vector2(0, 0);
-            frame.transform.Find("Left").GetComponent<RectTransform>().anchorMax = new Vector2(0, 1);
-            frame.transform.Find("Left").GetComponent<RectTransform>().offsetMin = new Vector2(0, f);
-            frame.transform.Find("Left").GetComponent<RectTransform>().offsetMax = new Vector2(f, -f);
-
-            frame.transform.Find("Right").GetComponent<RectTransform>().anchorMin = new Vector2(1, 0);
-            frame.transform.Find("Right").GetComponent<RectTransform>().anchorMax = new Vector2(1, 1);
-            frame.transform.Find("Right").GetComponent<RectTransform>().offsetMin = new Vector2(-f, f);
-            frame.transform.Find("Right").GetComponent<RectTransform>().offsetMax = new Vector2(0, -f);
-
-            return frame;
-        }
     }
 }

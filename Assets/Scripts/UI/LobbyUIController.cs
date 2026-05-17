@@ -61,11 +61,23 @@ namespace Tanki.UI
 
         public void ShowView(string viewName)
         {
-            if (_lobbyView != null) _lobbyView.SetActive(viewName == "lobby");
-            if (_garageView != null) _garageView.SetActive(viewName == "garage");
-            if (_settingsView != null) _settingsView.SetActive(viewName == "settings");
+            bool isLobby = viewName == "lobby";
+            bool isGarage = viewName == "garage";
+            bool isSettings = viewName == "settings";
 
-            Debug.Log($"[LobbyUI] Switched to view: {viewName}");
+            if (_lobbyView != null) _lobbyView.SetActive(isLobby);
+            if (_garageView != null) _garageView.SetActive(isGarage);
+            if (_settingsView != null) _settingsView.SetActive(isSettings);
+
+            // Sub-panels behavior (Matching legacy client)
+            if (_battleListPanel != null) _battleListPanel.SetActive(isLobby);
+            if (_battleInfoPanel != null) _battleInfoPanel.SetActive(isLobby);
+            
+            // Communication panel (News/Chat) usually stays visible in Lobby and Garage
+            if (_newsPanel != null) _newsPanel.SetActive(isLobby || isGarage);
+            if (_chatPanel != null) _chatPanel.SetActive(isLobby || isGarage);
+
+            Debug.Log($"[LobbyUI] Switched to view: {viewName} (Lobby={isLobby}, Garage={isGarage})");
         }
 
         public void SetLobbyActive(bool active)

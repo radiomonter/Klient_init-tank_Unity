@@ -11,6 +11,7 @@ namespace Tanki.Models
         public IntVariable Crystals;
         public IntVariable Score;
         public IntVariable NextRankScore;
+        public BoolVariable IsPremium;
 
         public void Initialize(string uid, int rank, int crystals, int score, int nextRankScore)
         {
