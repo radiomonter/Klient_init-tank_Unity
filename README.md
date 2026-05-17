@@ -29,7 +29,15 @@
 
 ---
 
-## 📊 Current Roadmap / План развития
+## � Screenshots / Скриншоты
+
+| Login Screen / Экран входа | Lobby Client / Лобби клиент |
+| :---: | :---: |
+| ![Login Screen](img_wiev/login.png) | ![Lobby Client](img_wiev/klient.png) |
+
+---
+
+## �📊 Current Roadmap / План развития
 
 | Feature / Функционал | Status / Статус | Description / Описание |
 | :--- | :---: | :--- |
